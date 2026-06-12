@@ -22,6 +22,10 @@ Two design commitments drive everything:
    trustworthy if every prediction is continuously checked against reality. The
    verification layer is built *alongside* the first predictive vertical, not bolted
    on later.
+3. **Predicting ≠ advising.** Counterfactual planning queries are *causal* — the twin
+   needs explicit causal structure and interventional validation, not just forecasting
+   accuracy. And because smart-city data is surveillance-grade, **privacy/governance
+   is designed in at ingestion**, not retrofitted.
 
 **Portability:** the twin is instantiable for any city from globally-available open
 layers (Sentinel-2, ERA5, OSM/Overture, Open-Meteo). Region-specific datasets (US
@@ -102,9 +106,19 @@ and real measurements provide checkable ground truth.
 
 - **Job:** learn the city's temporal dynamics and roll out forecasts &
   **counterfactuals** ("build a 40-storey tower on parcel P → district load Δ").
-- **Model family:** spatiotemporal GNN / transformer / neural operator over the H3
-  graph. Precedent: open ML weather models **GraphCast / Aurora / FourCastNet** show
-  the spatiotemporal-rollout pattern at scale.
+- **Model family / menu:** spatiotemporal GNN / transformer / neural operator over the
+  H3 graph. Precedent for spatiotemporal rollout: open ML weather models **GraphCast /
+  Aurora / FourCastNet**. For the *temporal* backbone and a strong zero/few-shot
+  baseline, pretrained **time-series foundation models — TimesFM (Google), Chronos
+  (Amazon), Moirai, Lag-Llama** — are directly relevant to load forecasting and must be
+  evaluated before (and against) any bespoke world model.
+- **Causal requirement (non-negotiable for L5):** counterfactual "what if we build X"
+  is an **interventional** *do(X)* query, not a forecast. A model trained on
+  observational data learns correlations and will give confidently wrong intervention
+  answers. L4 must therefore carry **explicit causal structure** (causal graph /
+  do-calculus over the intervention variables, or a structural world model) — *not* a
+  pure autoregressive forecaster. See "Interventional validation" in the verification
+  spine.
 - **Interface:** `rollout(state, intervention, horizon) -> trajectory + uncertainty`.
 
 ### L5 — Scenario / planner agent
@@ -115,15 +129,21 @@ and real measurements provide checkable ground truth.
 
 ## The verification spine (the crux)
 
-A twin is only trustworthy if continuously checked against reality. Three
-**independent** verifiable oracles:
+A twin is only trustworthy if continuously checked against reality. Verification
+draws on three independent sources — but they are **not equal**, so they form an
+explicit **oracle hierarchy** (a higher tier always overrides a lower one):
 
-1. **Real measurements** — held-out smart-meter / sensor data, predict-then-reveal.
-2. **Physics simulators** as queryable oracles — **EnergyPlus / CityLearn** (building
-   & district energy), **SUMO** (traffic), **UMEP** (urban heat / microclimate).
-3. **Conservation constraints** — energy balance, mass balance, parts-sum-to-whole.
+1. **Real measurements** *(tier 1)* — held-out smart-meter / sensor data,
+   predict-then-reveal. Ground truth.
+2. **Calibrated physics simulators** *(tier 2)* — **EnergyPlus / CityLearn** (energy),
+   **SUMO** (traffic), **UMEP** (urban heat). A simulator is a *model*, not truth:
+   EnergyPlus routinely diverges 20–40% from metered reality (the **sim2real gap**).
+   Simulators must themselves be calibrated against tier-1 data *before* they are
+   allowed to score anything; an uncalibrated sim is tier 3.
+3. **Conservation constraints** *(tier 3)* — energy balance, mass balance,
+   parts-sum-to-whole. Always available, weakest signal.
 
-These oracles drive four mechanisms:
+These oracles drive five mechanisms:
 
 - **RLVR** — reward = agreement with an oracle, so model improvements are *real and
   checkable*, not reward-hacked by a learned critic.
@@ -131,12 +151,31 @@ These oracles drive four mechanisms:
   analogy for a city): predict at *t*, reveal truth at *t+Δ*, score, log.
 - **Conformal calibration** — prediction intervals with guaranteed coverage
   ("demand = X ± Y at 90% coverage"), independent of model family.
-- **Drift detection** — when reality diverges from the twin, trigger **re-grounding**
-  (refit / re-perceive the affected cells).
+- **Drift detection + active sensing** — when reality diverges from the twin, trigger
+  **re-grounding** (refit / re-perceive the affected cells). And run the loop
+  *forward*: use the twin's own uncertainty to recommend **where to place the next
+  sensor / which cell to measure** (optimal experiment design / active learning), so
+  verification is a closed control loop, not passive monitoring.
+- **Interventional validation** — forecasting accuracy is *not* causal validity.
+  Separately score the twin's **intervention predictions** against real before/after
+  natural experiments (new construction, retrofits, tariff/policy changes). This is the
+  only honest check on L4's causal structure and L5's advice.
 
 This is also the answer to "how to verify the digital twin": *verification is not a
 one-time validation — it is a closed loop that re-grounds the twin against incoming
-real data forever.*
+real data forever, and that separates predicting-the-world from advising-on-changes.*
+
+### Baselines & benchmarks (verification has teeth only against these)
+
+Per standard ML discipline, a bespoke world model earns its place only by **beating
+dumb baselines on public benchmarks**:
+
+- **Benchmarks:** Building Data Genome 2, ASHRAE Great Energy Predictor III (GEPIII),
+  NREL ResStock/ComStock.
+- **Baselines to beat:** weather-normalized / degree-day regression, gradient-boosted
+  trees (often the surprise winner on load forecasting), archetype-based **UBEM**, and
+  the time-series FMs zero-shot (TimesFM / Chronos). SP4 reports against all of these
+  before any "SOTA" claim.
 
 ## Decomposition into sub-projects
 
@@ -160,16 +199,77 @@ trained with verifiable rewards, backtested against held-out real meter data, em
 calibrated intervals. Everything else is scaffolding around making that vertical real,
 then replicating the pattern.
 
+## Privacy & governance (design-in, not retrofit)
+
+High-resolution smart-meter / sensor data is **surveillance-grade** — it reveals
+occupancy, behavior, even appliance-level activity. This is a hard blocker for real
+deployment (GDPR, consent regimes) and must be designed in at L1, not bolted on:
+
+- **k-anonymity at the H3 cell** — never release a prediction or fused value derived
+  from fewer than *k* metered premises in a cell.
+- **Differential privacy** on released predictions and any published aggregate.
+- **Provenance-gated access** — sensitive layers carry access tiers; the L5 agent and
+  external consumers see DP/aggregated views only.
+- **Governance record** — consent basis and retention policy tracked per adapter; a
+  region adapter that can't satisfy the privacy contract is rejected at registration.
+
 ## Cross-cutting concerns
 
 - **Spatiotemporal data model** — H3 hex grid + time axis is the universal key across
   layers; everything joins on `(cell, time)`.
 - **Provenance & uncertainty** — every derived value carries source lineage and a
-  confidence/interval; uncertainty propagates up the stack.
+  confidence/interval; uncertainty propagates up the stack. Where sources **conflict**
+  (OSM vs satellite footprint), fuse with explicit uncertainty rather than picking one.
+- **Reflexivity (observer effect)** — the twin's predictions drive policy that changes
+  the city, so the system shifts under the model. Backtests and drift detection must
+  attribute divergence to *model error vs twin-induced change*, or they will mistake
+  successful interventions for failures.
+- **Equity / distributional outcomes** — optimizing *aggregate* energy can worsen who
+  bears heat, cost, or disruption. Report distributional metrics (per-population,
+  per-income-tract) alongside aggregate accuracy; an equity regression is a failure
+  even at higher aggregate accuracy.
 - **Open model zoo** — all named models/datasets are open-licence; region-specific or
   proprietary feeds are optional adapters.
 - **Portability** — instantiating the twin for a new city = registering that city's
   bounding box + any region adapters; global layers work out of the box.
+
+## Compute budget & model sizing (single A100 80GB target)
+
+**Design constraint:** every layer is sized to **train/fine-tune on one A100 80GB**.
+The rule that makes this hold: *fine-tune pretrained checkpoints (LoRA/QLoRA), never
+pretrain a foundation model from scratch; cap LLMs/VLMs at 7–8B, world models at ≤1B.*
+
+| Layer | Model(s) | Params | Fits 1×A100 80GB? | Strategy |
+|---|---|---|---|---|
+| L2 perception | Prithvi-EO / Clay / SatMAE | 0.1–0.6B | ✅ | full fine-tune |
+| L2 perception | SAM 2 | ~0.2B | ✅ | inference + decoder fine-tune |
+| L2 / L3 / L5 | Qwen2.5-VL-7B, Llama-3.1-8B, Qwen2.5-7B | 7–8B | ✅ | **QLoRA** (train) / 4-bit (infer) |
+| L4 world model | TimesFM, Chronos, Moirai, Lag-Llama | 0.01–0.7B | ✅ | fine-tune (often zero-shot first) |
+| L4 world model | spatiotemporal GNN / neural operator | <0.1B | ✅ | train from scratch (data-bound, not param-bound) |
+| L5 agent | instruct LLM | 7–8B local *or* API | ✅ | **inference only**, no training |
+| Spine | RLVR (GRPO/PPO) on the world model | <1B target | ✅ | LoRA + vLLM gen; tight but fits |
+
+**What would need more than 1×A100 (and is therefore out of scope):**
+- Full fine-tuning a 70B LLM, or RLVR/PPO on a 7B+ LLM with full precision → 2–8×A100
+  or H100s. *Avoided* by keeping training on the ≤1B world model and using 7–8B models
+  via QLoRA/API.
+- Pretraining a geospatial or weather foundation model from scratch → TPU/H100 weeks.
+  *Avoided* — we only ever fine-tune the open pretrained checkpoints.
+
+**Cost estimate (cloud A100 80GB):** ~$1.5–2.5/hr spot (Lambda / RunPod / Vast),
+~$3–4/hr on-demand.
+
+| Work item | GPU-hours | Cost (spot) |
+|---|---|---|
+| L2 geo-FM fine-tune | 20–50 | ~$50–150 |
+| L4 TS-FM fine-tune + GNN | 20–80 | ~$50–250 |
+| SP5 RLVR loop on world model | 50–150 | ~$150–450 |
+| L3 / L5 (inference-dominated) | <10 | ~$0–30 |
+| **End-to-end energy vertical (SP1+SP2/3+SP4+SP5)** | **~200–500** | **~$500–1.5k** |
+
+Non-GPU costs: object storage for Sentinel-2 / ERA5 tiles (read from cloud-hosted open
+catalogs — AWS Open Data, Microsoft Planetary Computer — to avoid egress); negligible
+LLM API spend if L5 uses a hosted instruct model instead of local 7–8B.
 
 ## Out-of-scope (deliberately deferred)
 
