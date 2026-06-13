@@ -12,6 +12,7 @@ import h3
 import numpy as np
 import polars as pl
 
+from sctwin.adapters.cache import CachingAdapter
 from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.app.render import h3_layer_records
@@ -23,7 +24,7 @@ from sctwin.verify.results import as_layer, verification_frame
 
 from presets import bbox_and_zoom
 
-MAX_CELLS = 400  # one Open-Meteo call per cell
+MAX_CELLS = 1000  # batched ~100 coords/request; Open-Meteo's free tier rate-limits by location
 
 # output field -> (display name, unit, range mode): zero=[0,max]; sym=[-M,M]; auto
 _ENERGY_LAYERS = [
@@ -47,14 +48,14 @@ def _resolve(preset: dict, radius: float | None, res: int | None) -> tuple[list,
     south, west, north, east, zoom, r = bbox_and_zoom(preset, radius, res)
     cells = cells_in_bbox(south, west, north, east, r)
     if not 0 < len(cells) <= MAX_CELLS:
-        raise SystemExit(f"{len(cells)} cells — keep 1..{MAX_CELLS} (one API call each); adjust --radius/--res")
+        raise SystemExit(f"{len(cells)} cells — keep 1..{MAX_CELLS} (batched fetch); adjust --radius/--res")
     return cells, zoom, r
 
 
 def _weather(cells: list, start: datetime, end: datetime) -> pl.DataFrame:
     reg = Registry()
-    reg.register(OpenMeteoWeatherAdapter())
-    print(f"fetching {len(cells)} cells {start.date()}..{end.date()} ...")
+    reg.register(CachingAdapter(OpenMeteoWeatherAdapter(), ".cache"))  # reuse downloads across runs
+    print(f"fetching {len(cells)} cells {start.date()}..{end.date()} (cached in .cache/) ...")
     return reg.get("weather.t2m", cells, start, end)
 
 
