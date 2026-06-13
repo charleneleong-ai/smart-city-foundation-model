@@ -20,12 +20,14 @@ uv sync --extra dev --extra forecast --extra app
 uv run pytest -q                     # full test suite
 ```
 
-## Map demo (H3 + deck.gl)
+## Map demo (3D H3 + deck.gl + MapLibre)
 
-Render a day of Open-Meteo temperature over London's H3 grid:
+Render a day of Open-Meteo temperature over London's H3 grid as a self-contained 3D
+WebGL map (extruded hexes, dark basemap, no token — opens straight from `file://`):
 
 ```bash
-uv run --extra app --extra forecast python apps/demo_weather.py   # -> weather_map.html
+mise run map            # or: uv run python apps/demo_weather.py  -> weather_3d.html
+open weather_3d.html
 ```
 
 Or serve the twin and query deck.gl-ready records:

@@ -17,7 +17,8 @@ def h3_layer_records(frame: pl.DataFrame, at: datetime) -> list[dict]:
         return []
     vmin = cast(float, snap["value"].min())
     span = (cast(float, snap["value"].max()) - vmin) or 1.0
-    return [
-        {"cell": r["cell"], "value": r["value"], "color": list(_ramp((r["value"] - vmin) / span))}
-        for r in snap.iter_rows(named=True)
-    ]
+    records = []
+    for r in snap.iter_rows(named=True):
+        t = (r["value"] - vmin) / span  # normalized 0..1 — drives both color and extrusion height
+        records.append({"cell": r["cell"], "value": r["value"], "color": list(_ramp(t)), "height": t})
+    return records
