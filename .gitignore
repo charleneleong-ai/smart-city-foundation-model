@@ -8,3 +8,4 @@ __pycache__/
 *_3d.html
 weather_map.html
 .cache/
+.era5/
