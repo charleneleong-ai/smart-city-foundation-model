@@ -1,0 +1,33 @@
+min_version = "2024.1.0"
+
+[tasks.setup]
+description = "Install all deps (dev + forecast + app)"
+run = "uv sync --extra dev --extra forecast --extra app"
+
+[tasks.test]
+description = "Run the test suite"
+run = "uv run pytest -q"
+
+[tasks.lint]
+description = "Ruff check"
+run = "uv run ruff check src tests apps"
+
+[tasks.fmt]
+description = "Ruff auto-fix + format"
+run = "uv run ruff check --fix src tests apps && uv run ruff format src tests apps"
+
+[tasks.typecheck]
+description = "mypy"
+run = "uv run mypy src"
+
+[tasks.check]
+description = "Lint + typecheck + test"
+depends = ["lint", "typecheck", "test"]
+
+[tasks.map]
+description = "Render Open-Meteo weather as a 3D WebGL map (default London; --city uk/nyc/tokyo)"
+run = "uv run python apps/demo_weather.py {{arg(name='args', default='')}}"
+
+[tasks.serve]
+description = "Serve the twin API (http://127.0.0.1:8000/docs)"
+run = "uv run --extra app python apps/serve.py"
