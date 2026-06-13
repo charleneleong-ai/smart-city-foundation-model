@@ -17,6 +17,9 @@ PRESETS: dict[str, dict] = {
     # region: Great Britain, north-south gradient (res 4 ~ 312 cells)
     "uk": {"south": 50.0, "west": -6.0, "north": 58.7, "east": 1.8,
            "res": 4, "lat": 54.5, "lon": -2.6, "zoom": 4.9, "pitch": 45.0},
+    # region: British Isles incl. Ireland (res 4 ~ 541 cells; res 5 ~ 3800, gridded only)
+    "isles": {"south": 49.8, "west": -11.0, "north": 59.0, "east": 2.0,
+              "res": 4, "lat": 54.0, "lon": -4.5, "zoom": 4.7, "pitch": 45.0},
 }
 
 

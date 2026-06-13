@@ -39,7 +39,7 @@ def _source() -> LayerAdapter:
 
 
 def _max_cells() -> int:
-    return 3000 if os.environ.get("WEATHER_SOURCE") == "era5" else MAX_CELLS  # ERA5 = one grid request
+    return 4000 if os.environ.get("WEATHER_SOURCE") == "era5" else MAX_CELLS  # ERA5 = one grid request
 
 # output field -> (display name, unit, range mode): zero=[0,max]; sym=[-M,M]; auto
 _ENERGY_LAYERS = [
