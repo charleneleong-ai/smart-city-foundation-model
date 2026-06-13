@@ -6,6 +6,7 @@ the Layer dropdown to pick a field, the radius slider to filter, Play to step th
 """
 
 import argparse
+import os
 
 from presets import PRESETS
 from render_3d import to_self_contained_html
@@ -28,7 +29,11 @@ def main() -> None:
     ap.add_argument("--days", type=int, default=5, help="days of history for the energy forecast")
     ap.add_argument("--radius", type=float, default=None, help="km around the preset centre")
     ap.add_argument("--res", type=int, default=None, help="H3 resolution override")
+    ap.add_argument("--source", default="open-meteo", choices=["open-meteo", "era5"],
+                    help="weather source — era5 is gridded (dense, no rate limit; needs CDS key)")
     args = ap.parse_args()
+    if args.source == "era5":
+        os.environ["WEATHER_SOURCE"] = "era5"
 
     p = PRESETS[args.city]
     m = twin_map(f"{args.city.upper()} twin", p, args.date, args.days, radius=args.radius, res=args.res)

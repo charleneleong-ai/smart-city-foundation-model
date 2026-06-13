@@ -18,9 +18,10 @@ from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.service import build_app
 from sctwin.registry import Registry
 
-source = ERA5Adapter() if os.environ.get("WEATHER_SOURCE") == "era5" else OpenMeteoWeatherAdapter()
+_era5 = os.environ.get("WEATHER_SOURCE") == "era5"
+source = ERA5Adapter() if _era5 else OpenMeteoWeatherAdapter()
 reg = Registry()
-reg.register(CachingAdapter(source, ".cache"))
+reg.register(CachingAdapter(source, ".cache/era5" if _era5 else ".cache/open-meteo"))
 app = build_app(reg)
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ plus the registry-level CachingAdapter. Heavy deps
 lazily, so importing this module is cheap and `_sample` is testable on a synthetic grid.
 """
 
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -67,7 +68,9 @@ class ERA5Adapter:
         from ecmwf.datastores import Client  # needs ~/.cdsapirc (CDS API key)
 
         self._workdir.mkdir(parents=True, exist_ok=True)
-        out = self._workdir / f"era5_{start.date()}_{end.date()}.nc"
+        area = self._area(cells)
+        key = hashlib.md5(repr(area).encode()).hexdigest()[:8]  # area in the key — distinct grids
+        out = self._workdir / f"era5_{start.date()}_{end.date()}_{key}.nc"
         if out.exists():
             return out
         request = {
@@ -75,7 +78,7 @@ class ERA5Adapter:
             "variable": _CDS_VAR,
             "date": f"{start.date()}/{end.date()}",
             "time": [f"{h:02d}:00" for h in range(24)],
-            "area": self._area(cells),
+            "area": area,
             "data_format": "netcdf",
         }
         Client().retrieve(self._dataset, request, str(out))  # submits, waits in queue, downloads

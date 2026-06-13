@@ -6,12 +6,14 @@ of canonical (cell, time, layer, value) records).
 """
 
 import math
+import os
 from datetime import datetime, timedelta, timezone
 
 import h3
 import numpy as np
 import polars as pl
 
+from sctwin.adapters.base import LayerAdapter
 from sctwin.adapters.cache import CachingAdapter
 from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
@@ -25,6 +27,19 @@ from sctwin.verify.results import as_layer, verification_frame
 from presets import bbox_and_zoom
 
 MAX_CELLS = 1000  # batched ~100 coords/request; Open-Meteo's free tier rate-limits by location
+
+
+def _source() -> LayerAdapter:
+    """WEATHER_SOURCE=era5 -> gridded ERA5 (one request, no rate limit); else Open-Meteo."""
+    if os.environ.get("WEATHER_SOURCE") == "era5":
+        from sctwin.adapters.era5 import ERA5Adapter
+
+        return ERA5Adapter()
+    return OpenMeteoWeatherAdapter()
+
+
+def _max_cells() -> int:
+    return 3000 if os.environ.get("WEATHER_SOURCE") == "era5" else MAX_CELLS  # ERA5 = one grid request
 
 # output field -> (display name, unit, range mode): zero=[0,max]; sym=[-M,M]; auto
 _ENERGY_LAYERS = [
@@ -47,15 +62,17 @@ _FORECAST_FEATURES = ["hour", "dow", "month", "y_lag_1", "y_lag_24"]
 def _resolve(preset: dict, radius: float | None, res: int | None) -> tuple[list, float, int]:
     south, west, north, east, zoom, r = bbox_and_zoom(preset, radius, res)
     cells = cells_in_bbox(south, west, north, east, r)
-    if not 0 < len(cells) <= MAX_CELLS:
-        raise SystemExit(f"{len(cells)} cells — keep 1..{MAX_CELLS} (batched fetch); adjust --radius/--res")
+    cap = _max_cells()
+    if not 0 < len(cells) <= cap:
+        raise SystemExit(f"{len(cells)} cells — keep 1..{cap}; adjust --radius/--res")
     return cells, zoom, r
 
 
 def _weather(cells: list, start: datetime, end: datetime) -> pl.DataFrame:
+    kind = os.environ.get("WEATHER_SOURCE", "open-meteo")
     reg = Registry()
-    reg.register(CachingAdapter(OpenMeteoWeatherAdapter(), ".cache"))  # reuse downloads across runs
-    print(f"fetching {len(cells)} cells {start.date()}..{end.date()} (cached in .cache/) ...")
+    reg.register(CachingAdapter(_source(), f".cache/{kind}"))  # per-source cache (don't mix grids)
+    print(f"fetching {len(cells)} cells {start.date()}..{end.date()} via {kind} (cached) ...")
     return reg.get("weather.t2m", cells, start, end)
 
 
