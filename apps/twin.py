@@ -25,7 +25,7 @@ from presets import bbox_and_zoom
 
 MAX_CELLS = 400  # one Open-Meteo call per cell
 
-# energy-domain field -> (display name, unit, range mode): zero=[0,max]; sym=[-M,M]; auto
+# output field -> (display name, unit, range mode): zero=[0,max]; sym=[-M,M]; auto
 _ENERGY_LAYERS = [
     ("y_true", "demand", "load", "auto"),
     ("y_pred", "forecast", "load", "auto"),
@@ -33,6 +33,14 @@ _ENERGY_LAYERS = [
     ("error", "delta (forecast−actual)", "load", "sym"),
     ("covered", "covered", "in/out", "auto"),
 ]
+_WEATHER_FC_LAYERS = [
+    ("y_true", "actual", "°C", "auto"),
+    ("y_pred", "forecast", "°C", "auto"),
+    ("abs_error", "|error|", "°C", "zero"),
+    ("covered", "covered", "in/out", "auto"),
+]
+# forecast a future value from calendar + its own lags only (no concurrent / circular features)
+_FORECAST_FEATURES = ["hour", "dow", "month", "y_lag_1", "y_lag_24"]
 
 
 def _resolve(preset: dict, radius: float | None, res: int | None) -> tuple[list, float, int]:
@@ -104,37 +112,49 @@ def _range(values: pl.Series, mode: str) -> tuple[float, float]:
     return float(values.min()), float(values.max())
 
 
+def _verify_layers(results: pl.DataFrame, specs: list, group: str) -> list[dict]:
+    res_num = results.with_columns(pl.col("covered").cast(pl.Float64))
+    times = res_num.select(pl.col("time").unique().sort()).to_series().to_list()
+    out = []
+    for field, nm, unit, mode in specs:
+        fl = as_layer(res_num, field)
+        vmin, vmax = _range(fl["value"], mode)
+        out.append({"name": nm, "unit": unit, "group": group,
+                    "frames": _frames(fl, times, vmin, vmax, "%m-%d %H:%M")})
+    return out
+
+
 def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res=None) -> dict:
-    """One map over a city's H3 grid with both Weather and Energy layers (grouped in a single
-    dropdown), so every layer is visible at once. Layers align by canonical cell order."""
+    """One map over a city's H3 grid with Inputs + per-domain forecast Outputs, grouped in a
+    single dropdown so every layer is visible at once. Weather is both an input (observed) and
+    an output (forecast), each verified — like the energy demand forecast. Layers align by cell."""
     cells, zoom, r = _resolve(preset, radius, res)
     s = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
     wx = _weather(cells, s, s + timedelta(days=days - 1))
 
-    day1 = wx.filter(pl.col("time") < s + timedelta(days=1))  # weather layers: first day (24 h)
+    # Inputs: observed weather (first day, 24 h)
+    day1 = wx.filter(pl.col("time") < s + timedelta(days=1))
     hours = day1.select(pl.col("time").unique().sort()).to_series().to_list()
     hdd = day1.with_columns(pl.max_horizontal(18.0 - pl.col("value"), 0.0).alias("value"))
 
     def wlayer(nm: str, f: pl.DataFrame) -> dict:
         vmin, vmax = float(f["value"].min()), float(f["value"].max())
-        return {"name": nm, "unit": "°C", "group": "Weather", "frames": _frames(f, hours, vmin, vmax, "%H:%M")}
+        return {"name": nm, "unit": "°C", "group": "Inputs", "frames": _frames(f, hours, vmin, vmax, "%H:%M")}
 
-    results = verification_frame(GBMForecaster(), build_supervised(_synth_load(wx, r), wx), FEATURE_COLS, alpha=0.1)
-    mae = float(results["abs_error"].mean())
-    cov = results["covered"].mean()
-    res_num = results.with_columns(pl.col("covered").cast(pl.Float64))
-    tt = res_num.select(pl.col("time").unique().sort()).to_series().to_list()
-    elayers = []
-    for field, nm, unit, mode in _ENERGY_LAYERS:
-        fl = as_layer(res_num, field)
-        vmin, vmax = _range(fl["value"], mode)
-        elayers.append({"name": nm, "unit": unit, "group": "Energy",
-                        "frames": _frames(fl, tt, vmin, vmax, "%m-%d %H:%M")})
+    # Output 1: weather forecast (predict t2m from calendar + its own lags)
+    wres = verification_frame(GBMForecaster(), build_supervised(wx, wx), _FORECAST_FEATURES, alpha=0.1)
+    weather_out = _verify_layers(wres, _WEATHER_FC_LAYERS, "Weather forecast")
 
+    # Output 2: energy demand forecast (synthetic load from weather features)
+    eres = verification_frame(GBMForecaster(), build_supervised(_synth_load(wx, r), wx), FEATURE_COLS, alpha=0.1)
+    energy_out = _verify_layers(eres, _ENERGY_LAYERS, "Energy forecast")
+
+    w_mae, e_mae = float(wres["abs_error"].mean()), float(eres["abs_error"].mean())
     return {
-        "name": name, "subtitle": f"weather + synthetic energy · MAE {mae:.1f} · coverage {cov:.0%}",
+        "name": name,
+        "subtitle": f"forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f}",
         **_view(preset, zoom, r),
-        "layers": [wlayer("2m temperature", day1), wlayer("heating degrees", hdd), *elayers],
+        "layers": [wlayer("temperature", day1), wlayer("heating degrees", hdd), *weather_out, *energy_out],
     }
 
 
