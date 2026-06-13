@@ -9,14 +9,15 @@ import argparse
 
 from presets import PRESETS
 from render_3d import to_self_contained_html
-from twin import energy_map, weather_map
+from twin import twin_map
 
 _ABOUT = (
-    "City digital twin. The Domain selector switches data layers — Weather (2 m temperature, "
-    "heating degrees) and Energy (demand, forecast, |error|, delta, coverage from the SP5 "
-    "split-conformal harness). Pick a layer within a domain; the radius slider filters "
-    "preloaded cells (no re-fetch); Play steps through time. Energy demand is synthetic for now. "
-    "More domains (infrastructure, aerial, construction) plug in as additional maps."
+    "City digital twin. The Layer dropdown groups every layer by domain — Weather (2 m "
+    "temperature, heating degrees) and Energy (demand, forecast, |error|, delta, coverage "
+    "from the SP4 GBM + SP5 split-conformal harness) — so all are visible at once. Hover a "
+    "hex to compare a domain's layers (e.g. demand vs forecast). The radius slider filters "
+    "preloaded cells (no re-fetch); Play steps through time. Energy demand is synthetic for "
+    "now. More domains (infrastructure, aerial, construction) plug in as more layer groups."
 )
 
 
@@ -30,15 +31,12 @@ def main() -> None:
     args = ap.parse_args()
 
     p = PRESETS[args.city]
-    maps = [
-        weather_map("Weather", p, args.date, radius=args.radius, res=args.res),
-        energy_map("Energy", p, args.date, args.days, radius=args.radius, res=args.res),
-    ]
-    html = to_self_contained_html(maps, title=f"{args.city.upper()} — city digital twin", about=_ABOUT)
+    m = twin_map(f"{args.city.upper()} twin", p, args.date, args.days, radius=args.radius, res=args.res)
+    html = to_self_contained_html([m], title=f"{args.city.upper()} — city digital twin", about=_ABOUT)
     out = f"{args.city}_twin_3d.html"
     with open(out, "w") as f:
         f.write(html)
-    print(f"wrote {out} — domains: " + ", ".join(m["name"] for m in maps))
+    print(f"wrote {out} — {len(m['layers'])} layers (" + ", ".join(layer["name"] for layer in m["layers"]) + ")")
 
 
 if __name__ == "__main__":

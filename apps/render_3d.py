@@ -85,11 +85,13 @@ _TEMPLATE = """<!DOCTYPE html>
   map.addControl(new maplibregl.NavigationControl());
   const overlay = new deck.MapboxOverlay({
     layers: [],
-    getTooltip: ({ object }) => object && {  // show every layer for the hovered cell (active one bold)
-      html: MAPS[mapIdx].layers.map((L, j) => {
-        const line = `${L.name}: ${L.frames[frame].v[object.idx].toFixed(1)} ${L.unit}`;
-        return j === layerIdx ? `<b>${line}</b>` : line;
-      }).join('<br>'),
+    getTooltip: ({ object }) => object && {  // show same-group layers for the hovered cell (active bold)
+      html: MAPS[mapIdx].layers.map((L, j) => ({ L, j }))
+        .filter(({ L }) => L.group === MAPS[mapIdx].layers[layerIdx].group)
+        .map(({ L, j }) => {
+          const line = `${L.name}: ${L.frames[frame].v[object.idx].toFixed(1)} ${L.unit}`;
+          return j === layerIdx ? `<b>${line}</b>` : line;
+        }).join('<br>'),
       style: { background: '#11141c', color: '#e8eaf2', fontSize: '12px', borderRadius: '6px' },
     },
   });
@@ -126,8 +128,10 @@ _TEMPLATE = """<!DOCTYPE html>
     const m = M();
     map.jumpTo({ center: [m.lon, m.lat], zoom: m.zoom, pitch: m.pitch });
     document.getElementById('subtitle').textContent = m.subtitle;
-    document.getElementById('layer').innerHTML =
-      m.layers.map((L, j) => `<option value="${j}">${L.name}</option>`).join('');
+    const groups = {};
+    m.layers.forEach((L, j) => { (groups[L.group || ''] ||= []).push(`<option value="${j}">${L.name}</option>`); });
+    document.getElementById('layer').innerHTML = Object.entries(groups)
+      .map(([g, opts]) => g ? `<optgroup label="${g}">${opts.join('')}</optgroup>` : opts.join('')).join('');
     radius.max = m.maxdist; radius.value = m.maxdist; visRadius = m.maxdist;
     slider.max = m.layers[0].frames.length - 1; slider.value = 0;
     render();
@@ -176,7 +180,7 @@ def _js_layer(layer: dict) -> dict:
         for f in layer["frames"]
     ]
     vals = [v for f in frames for v in f["v"]] or [0.0]
-    return {"name": layer["name"], "unit": layer.get("unit", ""),
+    return {"name": layer["name"], "unit": layer.get("unit", ""), "group": layer.get("group", ""),
             "vmin": min(vals), "vmax": max(vals), "frames": frames}
 
 

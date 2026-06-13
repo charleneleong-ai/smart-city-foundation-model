@@ -104,25 +104,37 @@ def _range(values: pl.Series, mode: str) -> tuple[float, float]:
     return float(values.min()), float(values.max())
 
 
-def energy_map(name: str, preset: dict, start: str, days: int, *, radius=None, res=None) -> dict:
-    """Energy domain: (synthetic) demand + its GBM forecast and SP5 verification fields."""
+def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res=None) -> dict:
+    """One map over a city's H3 grid with both Weather and Energy layers (grouped in a single
+    dropdown), so every layer is visible at once. Layers align by canonical cell order."""
     cells, zoom, r = _resolve(preset, radius, res)
     s = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
     wx = _weather(cells, s, s + timedelta(days=days - 1))
+
+    day1 = wx.filter(pl.col("time") < s + timedelta(days=1))  # weather layers: first day (24 h)
+    hours = day1.select(pl.col("time").unique().sort()).to_series().to_list()
+    hdd = day1.with_columns(pl.max_horizontal(18.0 - pl.col("value"), 0.0).alias("value"))
+
+    def wlayer(nm: str, f: pl.DataFrame) -> dict:
+        vmin, vmax = float(f["value"].min()), float(f["value"].max())
+        return {"name": nm, "unit": "°C", "group": "Weather", "frames": _frames(f, hours, vmin, vmax, "%H:%M")}
+
     results = verification_frame(GBMForecaster(), build_supervised(_synth_load(wx, r), wx), FEATURE_COLS, alpha=0.1)
     mae = float(results["abs_error"].mean())
-    rmse = float((results["abs_error"] ** 2).mean()) ** 0.5
     cov = results["covered"].mean()
-
     res_num = results.with_columns(pl.col("covered").cast(pl.Float64))
-    times = res_num.select(pl.col("time").unique().sort()).to_series().to_list()
-    layers = []
+    tt = res_num.select(pl.col("time").unique().sort()).to_series().to_list()
+    elayers = []
     for field, nm, unit, mode in _ENERGY_LAYERS:
         fl = as_layer(res_num, field)
         vmin, vmax = _range(fl["value"], mode)
-        layers.append({"name": nm, "unit": unit, "frames": _frames(fl, times, vmin, vmax, "%m-%d %H:%M")})
+        elayers.append({"name": nm, "unit": unit, "group": "Energy",
+                        "frames": _frames(fl, tt, vmin, vmax, "%m-%d %H:%M")})
 
     return {
-        "name": name, "subtitle": f"synthetic load · GBM · MAE {mae:.1f} · RMSE {rmse:.1f} · coverage {cov:.0%}",
-        **_view(preset, zoom, r), "layers": layers,
+        "name": name, "subtitle": f"weather + synthetic energy · MAE {mae:.1f} · coverage {cov:.0%}",
+        **_view(preset, zoom, r),
+        "layers": [wlayer("2m temperature", day1), wlayer("heating degrees", hdd), *elayers],
     }
+
+
