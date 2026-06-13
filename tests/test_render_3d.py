@@ -21,8 +21,12 @@ def _frame(label: str, hot_val: float) -> dict:
     }
 
 
-def _layer(name: str, unit: str, frames: list[dict]) -> dict:
-    return {"name": name, "unit": unit, "frames": frames}
+def _layer(name: str, frames: list[dict]) -> dict:
+    return {"name": name, "unit": "u", "frames": frames}
+
+
+def _map(name: str, layers: list[dict]) -> dict:
+    return {"name": name, "subtitle": name, "lat": 51.5, "lon": -0.11, "zoom": 10.0, "layers": layers}
 
 
 def _css_rule(html: str, selector: str) -> str:
@@ -30,49 +34,47 @@ def _css_rule(html: str, selector: str) -> str:
 
 
 def test_html_is_self_contained_with_inlined_polygons():
-    html = to_self_contained_html([_layer("t2m", "°C", [_frame("12:00", 4.5)])], lat=51.5, lon=-0.12)
+    html = to_self_contained_html([_map("weather", [_layer("t2m", [_frame("12:00", 4.5)])])])
     assert "<!DOCTYPE html>" in html
     assert "PolygonLayer" in html  # core deck layer (avoids the broken bundled h3-js)
     assert "cartocdn.com" in html  # dark basemap, no token
     assert '"polygon"' in html  # python-computed hex boundary inlined (opens via file://)
-    assert "__CELLS__" not in html and "__LAYERS__" not in html  # placeholders filled
+    assert "__MAPS__" not in html and "__MAP_OPTIONS__" not in html  # placeholders filled
 
 
-def test_single_layer_hides_dropdown():
-    html = to_self_contained_html([_layer("t2m", "°C", [_frame("12:00", 4.5)])], lat=51.5, lon=-0.12)
-    assert "display: none" in _css_rule(html, "#layerwrap")
-    assert html.count("<option") == 1
+def test_single_map_hides_domain_dropdown():
+    html = to_self_contained_html([_map("weather", [_layer("t2m", [_frame("12:00", 4.5)])])])
+    assert "display: none" in _css_rule(html, "#mapwrap")
+    assert '<select id="layer"></select>' in html  # layer options are built client-side, not server-side
 
 
-def test_radius_slider_embeds_per_cell_distance():
+def test_multiple_maps_show_domain_dropdown_with_options():
+    maps = [
+        _map("Weather", [_layer("t2m", [_frame("00:00", 4.5)])]),
+        _map("Energy", [_layer("demand", [_frame("00:00", 9.0)]), _layer("forecast", [_frame("00:00", 8.0)])]),
+    ]
+    html = to_self_contained_html(maps)
+    assert "display: block" in _css_rule(html, "#mapwrap")
+    assert '<option value="0">Weather</option>' in html
+    assert '<option value="1">Energy</option>' in html
+    # every layer is embedded so the tooltip can show all of them at once
+    assert '"name": "demand"' in html and '"name": "forecast"' in html
+
+
+def test_radius_slider_embeds_per_cell_distance_and_maxdist():
     far = h3.latlng_to_cell(51.60, 0.00, 8)
     records = [
         {"cell": _HOT, "value": 1.0, "color": [0, 0, 0, 1], "height": 0.0},
         {"cell": far, "value": 2.0, "color": [0, 0, 0, 1], "height": 1.0},
     ]
-    html = to_self_contained_html([_layer("t", "x", [{"label": "a", "records": records}])], lat=51.5, lon=-0.1)
+    html = to_self_contained_html([_map("m", [_layer("t", [{"label": "a", "records": records}])])])
     assert 'id="radius"' in html  # in-map radius slider present
-    assert "__MAXDIST__" not in html  # max distance placeholder filled
-    assert '"dist":' in html  # per-cell distance embedded for client-side filtering (no re-fetch)
+    assert '"dist":' in html and '"maxdist":' in html  # per-cell distance + max embedded (client-side filter)
 
 
-def test_multiple_layers_show_dropdown_with_options():
-    layers = [_layer("error", "x", [_frame("00:00", 4.5)]), _layer("coverage", "in", [_frame("00:00", 1.0)])]
-    html = to_self_contained_html(layers, lat=51.5, lon=-0.12)
-    assert "display: block" in _css_rule(html, "#layerwrap")
-    assert '<option value="0">error</option>' in html
-    assert '<option value="1">coverage</option>' in html
-
-
-def test_time_controls_hidden_for_single_frame():
-    html = to_self_contained_html([_layer("t2m", "°C", [_frame("12:00", 4.5)])], lat=51.5, lon=-0.12)
-    assert "display: none" in _css_rule(html, "#controls")
-
-
-def test_time_controls_and_play_shown_for_multi_frame():
+def test_layer_spans_its_global_value_range():
     frames = [_frame("00:00", 4.5), _frame("06:00", 9.0), _frame("12:00", 2.0)]
-    html = to_self_contained_html([_layer("err", "x", frames)], lat=51.5, lon=-0.12)
-    assert "display: block" in _css_rule(html, "#controls")
-    assert 'id="play"' in html  # play button present for animation
+    html = to_self_contained_html([_map("m", [_layer("err", frames)])])
     assert "00:00" in html and "12:00" in html  # frame labels embedded
     assert '"vmin": 1.0' in html and '"vmax": 9.0' in html  # layer spans its global value range
+    assert 'id="play"' in html  # play button present for animation

@@ -25,8 +25,12 @@ description = "Lint + typecheck + test"
 depends = ["lint", "typecheck", "test"]
 
 [tasks.map]
-description = "Render Open-Meteo weather as a 3D WebGL map (default London; --city uk/nyc/tokyo)"
+description = "Render the Weather domain as a 3D WebGL map (default UK; --city london/nyc/tokyo)"
 run = "uv run python apps/demo_weather.py {{arg(name='args', default='')}}"
+
+[tasks.twin]
+description = "Render the multi-domain city twin (Weather + Energy) -> <city>_twin_3d.html"
+run = "uv run --extra forecast python apps/demo_twin.py {{arg(name='args', default='')}}"
 
 [tasks.verify-map]
 description = "Render the SP5 verification error map (forecast -> verify -> 3D map)"

@@ -1,14 +1,16 @@
-"""Self-contained deck.gl + MapLibre 3D renderer for multi-layer, time-series H3 data.
+"""Self-contained deck.gl + MapLibre 3D renderer for multi-map, multi-layer, time-series
+H3 data.
 
 Produces a single HTML file (data inlined, libs via CDN) — opens straight from file://,
-no server, no map token. WebGL hexes on a dark vector basemap, pitched, lit, with a
-**layer dropdown**, a time slider, a 2D/3D toggle, a Play button, a value legend, an
-"about" panel, and hover tooltips.
+no server, no map token. Three nested selectors: a **map** dropdown (e.g. weather inputs
+vs verification, or different cities — each with its own geometry/centre), a **layer**
+dropdown within the active map, and a **time** slider over frames. Plus an in-map radius
+slider (filters preloaded cells by distance — no re-fetch), a 2D/3D toggle, Play, a value
+legend, an "about" panel, and hover tooltips.
 
-Hex boundaries are computed in Python (h3.cell_to_boundary) and drawn with deck.gl's
-core PolygonLayer — deck's own H3HexagonLayer relies on a CDN-bundled h3-js that is
-broken in the standalone build. Geometry is embedded once; each layer carries per-frame
-value/color/height arrays.
+Hex boundaries are computed in Python (h3.cell_to_boundary) and drawn with deck.gl's core
+PolygonLayer — deck's own H3HexagonLayer relies on a CDN-bundled h3-js that is broken in
+the standalone build.
 """
 
 import json
@@ -31,19 +33,19 @@ _TEMPLATE = """<!DOCTYPE html>
     font: 13px/1.45 -apple-system, system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.45); }
   #panel h1 { font-size: 15px; margin: 0 0 2px; }
   #panel .sub { opacity: .72; font-size: 12px; }
-  #layerwrap { margin: 11px 0 2px; display: __LAYER_DISPLAY__; }
-  #layer { width: 100%; padding: 5px; color: #e8eaf2; background: rgba(255,255,255,.07);
+  #mapwrap { margin: 11px 0 0; display: __MAP_DISPLAY__; }
+  #layerwrap { margin: 8px 0 2px; }
+  select { width: 100%; padding: 5px; color: #e8eaf2; background: rgba(255,255,255,.07);
     border: 1px solid rgba(255,255,255,.16); border-radius: 7px; font: 12px system-ui; }
   #bar { height: 9px; margin: 11px 0 4px;
     background: linear-gradient(90deg, rgb(0,40,255), rgb(140,40,160), rgb(255,40,0)); border-radius: 5px; }
   #scale { display: flex; justify-content: space-between; font-size: 11px; opacity: .82; }
   #about { font-size: 12px; opacity: .82; margin: 11px 0 0; }
-  #controls { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 11px;
-    display: __CTRL_DISPLAY__; }
-  #trow { display: flex; align-items: center; gap: 9px; }
-  #time { flex: 1; accent-color: #ff5a3c; }
-  #tlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 78px; }
-  #btns { display: flex; gap: 8px; margin-top: 9px; }
+  #controls { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 11px; }
+  #trow { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+  #time, #radius { flex: 1; accent-color: #ff5a3c; }
+  #tlabel, #rlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 92px; font-size: 11px; }
+  #btns { display: flex; gap: 8px; margin-top: 3px; }
   .btn { flex: 1; padding: 6px; cursor: pointer; color: #e8eaf2;
     background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16); border-radius: 7px;
     font: 12px system-ui; }
@@ -54,20 +56,15 @@ _TEMPLATE = """<!DOCTYPE html>
 <div id="map"></div>
 <div id="panel">
   <h1>__TITLE__</h1>
-  <div class="sub">__SUBTITLE__</div>
-  <div id="layerwrap"><select id="layer">__OPTIONS__</select></div>
+  <div class="sub" id="subtitle"></div>
+  <div id="mapwrap"><select id="mapsel">__MAP_OPTIONS__</select></div>
+  <div id="layerwrap"><select id="layer"></select></div>
   <div id="bar"></div>
   <div id="scale"><span id="vmin"></span><span id="vmax"></span></div>
   <p id="about">__ABOUT__</p>
   <div id="controls">
-    <div id="trow">
-      <input id="radius" type="range" min="1" max="__MAXDIST__" value="__MAXDIST__" step="1" />
-      <span id="rlabel"></span>
-    </div>
-    <div id="trow">
-      <input id="time" type="range" min="0" value="0" step="1" />
-      <span id="tlabel"></span>
-    </div>
+    <div id="trow"><input id="radius" type="range" min="1" step="1" /><span id="rlabel"></span></div>
+    <div id="trow"><input id="time" type="range" min="0" value="0" step="1" /><span id="tlabel"></span></div>
     <div id="btns">
       <button id="play" class="btn">&#9654; Play</button>
       <button id="toggle" class="btn">2D / 3D</button>
@@ -75,65 +72,78 @@ _TEMPLATE = """<!DOCTYPE html>
   </div>
 </div>
 <script>
-  const CELLS = __CELLS__;     // [{polygon:[[lng,lat]...]}]  — static geometry
-  const LAYERS = __LAYERS__;   // [{name, unit, vmin, vmax, frames:[{label,v,c,h}]}]
-  let layerIdx = 0, frame = 0, extruded = true;
+  const MAPS = __MAPS__;  // [{name, subtitle, lat, lon, zoom, pitch, elev, maxdist, cells, layers}]
+  let mapIdx = 0, layerIdx = 0, frame = 0, extruded = true;
   const map = new maplibregl.Map({
     container: 'map',
     style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-    center: [__LON__, __LAT__], zoom: __ZOOM__, pitch: __PITCH__, bearing: __BEARING__,
-    antialias: true,
+    center: [MAPS[0].lon, MAPS[0].lat], zoom: MAPS[0].zoom, pitch: MAPS[0].pitch,
+    bearing: __BEARING__, antialias: true,
   });
   map.addControl(new maplibregl.NavigationControl());
   const overlay = new deck.MapboxOverlay({
     layers: [],
-    getTooltip: ({ object }) => object && {
-      html: `<b>${object.value.toFixed(2)} ${LAYERS[layerIdx].unit}</b>`,
+    getTooltip: ({ object }) => object && {  // show every layer for the hovered cell (active one bold)
+      html: MAPS[mapIdx].layers.map((L, j) => {
+        const line = `${L.name}: ${L.frames[frame].v[object.idx].toFixed(1)} ${L.unit}`;
+        return j === layerIdx ? `<b>${line}</b>` : line;
+      }).join('<br>'),
       style: { background: '#11141c', color: '#e8eaf2', fontSize: '12px', borderRadius: '6px' },
     },
   });
   map.addControl(overlay);
 
-  const slider = document.getElementById('time'), playBtn = document.getElementById('play');
-  const radius = document.getElementById('radius');
-  let visRadius = +radius.max, timer = null;
+  const slider = document.getElementById('time'), radius = document.getElementById('radius');
+  const playBtn = document.getElementById('play');
+  let visRadius = MAPS[0].maxdist, timer = null;
+  const M = () => MAPS[mapIdx];
 
   function render() {
-    const L = LAYERS[layerIdx], F = L.frames[frame];
+    const m = M(), L = m.layers[layerIdx], F = L.frames[frame];
     const data = [];
-    CELLS.forEach((c, i) => {  // preloaded cells, filtered by the radius slider (no re-fetch)
-      if (c.dist <= visRadius) data.push({ polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] });
+    m.cells.forEach((c, i) => {  // preloaded cells, filtered by the radius slider (no re-fetch)
+      if (c.dist <= visRadius) data.push({ idx: i, polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] });
     });
     overlay.setProps({ layers: [new deck.PolygonLayer({
       id: 'hex', data, extruded, filled: true, wireframe: false,
       getPolygon: d => d.polygon, getFillColor: d => d.color,
-      getElevation: d => d.height, elevationScale: extruded ? __ELEV__ : 0,
+      getElevation: d => d.height, elevationScale: extruded ? m.elev : 0,
       opacity: extruded ? 0.86 : 0.7, pickable: true,
       material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
-      updateTriggers: { getFillColor: [layerIdx, frame], getElevation: [layerIdx, frame, extruded] },
+      updateTriggers: { getFillColor: [mapIdx, layerIdx, frame], getElevation: [mapIdx, layerIdx, frame, extruded] },
     })] });
     document.getElementById('tlabel').textContent = F.label;
-    document.getElementById('rlabel').textContent = '≤ ' + visRadius + ' km (' + data.length + ')';
+    document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ')';
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
   }
   function setFrame(i) { frame = i; slider.value = i; render(); }
-  radius.addEventListener('input', e => { visRadius = +e.target.value; render(); });
 
+  function selectMap(i) {
+    mapIdx = i; layerIdx = 0; frame = 0;
+    const m = M();
+    map.jumpTo({ center: [m.lon, m.lat], zoom: m.zoom, pitch: m.pitch });
+    document.getElementById('subtitle').textContent = m.subtitle;
+    document.getElementById('layer').innerHTML =
+      m.layers.map((L, j) => `<option value="${j}">${L.name}</option>`).join('');
+    radius.max = m.maxdist; radius.value = m.maxdist; visRadius = m.maxdist;
+    slider.max = m.layers[0].frames.length - 1; slider.value = 0;
+    render();
+  }
+
+  document.getElementById('mapsel').addEventListener('change', e => selectMap(+e.target.value));
   document.getElementById('layer').addEventListener('change', e => {
-    layerIdx = +e.target.value;
-    slider.max = LAYERS[layerIdx].frames.length - 1;
-    setFrame(0);
+    layerIdx = +e.target.value; slider.max = M().layers[layerIdx].frames.length - 1; setFrame(0);
   });
   slider.addEventListener('input', e => setFrame(+e.target.value));
+  radius.addEventListener('input', e => { visRadius = +e.target.value; render(); });
   document.getElementById('toggle').addEventListener('click', () => { extruded = !extruded; render(); });
   playBtn.addEventListener('click', () => {
     if (timer) { clearInterval(timer); timer = null; playBtn.innerHTML = '&#9654; Play'; }
-    else { timer = setInterval(() => setFrame((frame + 1) % LAYERS[layerIdx].frames.length), 420);
+    else { timer = setInterval(() => setFrame((frame + 1) % M().layers[layerIdx].frames.length), 420);
            playBtn.innerHTML = '&#9208; Pause'; }
   });
-  slider.max = LAYERS[0].frames.length - 1;
-  render();
+  selectMap(0);
 </script>
 </body>
 </html>
@@ -141,7 +151,6 @@ _TEMPLATE = """<!DOCTYPE html>
 
 
 def _hex_ring(cell: str) -> list[list[float]]:
-    """H3 cell -> closed [lng, lat] ring for deck.gl PolygonLayer."""
     ring = [[lng, lat] for lat, lng in h3.cell_to_boundary(cell)]
     ring.append(ring[0])
     return ring
@@ -165,57 +174,40 @@ def _js_layer(layer: dict) -> dict:
         for f in layer["frames"]
     ]
     vals = [v for f in frames for v in f["v"]] or [0.0]
+    return {"name": layer["name"], "unit": layer.get("unit", ""),
+            "vmin": min(vals), "vmax": max(vals), "frames": frames}
+
+
+def _js_map(m: dict) -> dict:
+    cells = []
+    for r in m["layers"][0]["frames"][0]["records"]:
+        clat, clon = h3.cell_to_latlng(r["cell"])
+        cells.append({"polygon": _hex_ring(r["cell"]),
+                      "dist": round(_haversine_km(m["lat"], m["lon"], clat, clon), 1)})
+    max_dist = max((c["dist"] for c in cells), default=1.0)
     return {
-        "name": layer["name"],
-        "unit": layer.get("unit", ""),
-        "vmin": min(vals),
-        "vmax": max(vals),
-        "frames": frames,
+        "name": m["name"], "subtitle": m.get("subtitle", ""),
+        "lat": m["lat"], "lon": m["lon"], "zoom": m["zoom"], "pitch": m.get("pitch", 50.0),
+        "elev": m.get("elevation_scale", 900.0), "maxdist": int(math.ceil(max_dist)),
+        "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
     }
 
 
-def to_self_contained_html(
-    layers: list[dict],
-    *,
-    lat: float,
-    lon: float,
-    title: str = "sctwin",
-    subtitle: str = "",
-    about: str = "",
-    zoom: float = 10.6,
-    pitch: float = 50.0,
-    bearing: float = 18.0,
-    elevation_scale: float = 900.0,
-) -> str:
-    """Render named layers (each with time frames) as a self-contained 3D map.
+def to_self_contained_html(maps: list[dict], *, title: str = "sctwin", about: str = "", bearing: float = 18.0) -> str:
+    """Render named maps as a self-contained 3D viewer with map/layer/time selectors.
 
-    layers: [{"name": str, "unit": str, "frames": [{"label": str, "records": [...]}]}].
-    All frames across all layers must share the same cells in the same order
-    (geometry is taken from the first frame of the first layer).
+    maps: [{"name", "subtitle", "lat", "lon", "zoom", "pitch", "elevation_scale",
+            "layers": [{"name", "unit", "frames": [{"label", "records": [...]}]}]}].
+    Each map is self-contained (own geometry + centre); switching maps recentres the view.
     """
-    cells = []
-    for r in layers[0]["frames"][0]["records"]:
-        clat, clon = h3.cell_to_latlng(r["cell"])
-        cells.append({"polygon": _hex_ring(r["cell"]), "dist": round(_haversine_km(lat, lon, clat, clon), 1)})
-    max_dist = max((c["dist"] for c in cells), default=1.0)
-    js_layers = [_js_layer(layer) for layer in layers]
-    n_frames = len(js_layers[0]["frames"])
-    options = "".join(f'<option value="{i}">{layer["name"]}</option>' for i, layer in enumerate(layers))
-    repl = {  # repr() on floats yields valid JS number literals; json.dumps for arrays
-        "__CELLS__": json.dumps(cells),
-        "__LAYERS__": json.dumps(js_layers),
-        "__OPTIONS__": options,
-        "__LON__": repr(lon),
-        "__LAT__": repr(lat),
-        "__ZOOM__": repr(zoom),
-        "__PITCH__": repr(pitch),
+    js_maps = [_js_map(m) for m in maps]
+    options = "".join(f'<option value="{i}">{m["name"]}</option>' for i, m in enumerate(maps))
+    repl = {  # repr() on floats -> valid JS number literals; json.dumps for arrays
+        "__MAPS__": json.dumps(js_maps),
+        "__MAP_OPTIONS__": options,
         "__BEARING__": repr(bearing),
-        "__ELEV__": repr(elevation_scale),
-        "__MAXDIST__": str(int(math.ceil(max_dist))),
-        "__LAYER_DISPLAY__": "block" if len(layers) > 1 else "none",
-        "__CTRL_DISPLAY__": "block" if n_frames > 1 else "none",
+        "__MAP_DISPLAY__": "block" if len(maps) > 1 else "none",
         "__TITLE__": title,
-        "__SUBTITLE__": subtitle,
         "__ABOUT__": about,
     }
     html = _TEMPLATE
