@@ -33,6 +33,15 @@ open london_3d.html                                # Play button + time slider +
 ```
 
 Presets: `london`, `nyc`, `tokyo` (city, H3 res 8), `uk` (region, res 4 — north-south gradient).
+
+## Verify-view (SP5 accuracy map)
+
+Forecast → split-conformal verification → render the per-cell prediction **error** on the
+same 3D map (red = where the twin is least accurate; panel reports empirical coverage):
+
+```bash
+mise run verify-map                                    # -> london_verify_3d.html (~90% coverage)
+```
 `--radius <km>` sets the area around the preset centre; `--res <0..15>` sets H3 detail
 (coarser = fewer cells = fewer API calls; the demo caps at 400 cells). Extrusion auto-scales
 to hex size so 3D is visible at any zoom.

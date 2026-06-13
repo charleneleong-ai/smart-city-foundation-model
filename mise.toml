@@ -28,6 +28,10 @@ depends = ["lint", "typecheck", "test"]
 description = "Render Open-Meteo weather as a 3D WebGL map (default London; --city uk/nyc/tokyo)"
 run = "uv run python apps/demo_weather.py {{arg(name='args', default='')}}"
 
+[tasks.verify-map]
+description = "Render the SP5 verification error map (forecast -> verify -> 3D map)"
+run = "uv run --extra forecast python apps/demo_verify.py {{arg(name='args', default='')}}"
+
 [tasks.serve]
 description = "Serve the twin API (http://127.0.0.1:8000/docs)"
 run = "uv run --extra app python apps/serve.py"
