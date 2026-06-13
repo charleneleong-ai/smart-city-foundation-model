@@ -9,10 +9,10 @@ from sctwin.app.cells import cells_in_bbox  # noqa: E402
 
 
 def test_every_preset_bbox_yields_bounded_cells():
-    # one Open-Meteo call per cell, so each preset must stay small enough to be polite
+    # default source is batched Open-Meteo (cap 1000); ERA5 lifts it further (one grid request)
     for name, p in PRESETS.items():
         n = len(cells_in_bbox(p["south"], p["west"], p["north"], p["east"], p["res"]))
-        assert 0 < n <= 400, f"{name}: {n} cells"
+        assert 0 < n <= 1000, f"{name}: {n} cells"
 
 
 def test_presets_have_required_view_fields():
