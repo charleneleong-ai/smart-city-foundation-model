@@ -7,7 +7,6 @@ Run: uv run python apps/demo_weather.py --city uk            (london, nyc, tokyo
 """
 
 import argparse
-import math
 from datetime import datetime, timezone
 
 import h3
@@ -18,7 +17,7 @@ from sctwin.app.cells import cells_in_bbox
 from sctwin.app.render import h3_layer_records
 from sctwin.registry import Registry
 
-from presets import PRESETS
+from presets import PRESETS, bbox_and_zoom
 from render_3d import to_self_contained_html
 
 _ABOUT = (
@@ -30,12 +29,6 @@ _ABOUT = (
 _MAX_CELLS = 400  # one Open-Meteo call per cell
 
 
-def _bbox_around(lat: float, lon: float, radius_km: float) -> tuple[float, float, float, float]:
-    dlat = radius_km / 111.0
-    dlon = radius_km / (111.0 * math.cos(math.radians(lat)))
-    return lat - dlat, lon - dlon, lat + dlat, lon + dlon
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="Render a day of Open-Meteo temperature as a 3D map.")
     ap.add_argument("--city", default="uk", choices=sorted(PRESETS), help="preset region")
@@ -45,15 +38,7 @@ def main() -> None:
     args = ap.parse_args()
 
     p = PRESETS[args.city]
-    res = args.res if args.res is not None else p["res"]
-    if args.radius is not None:
-        south, west, north, east = _bbox_around(p["lat"], p["lon"], args.radius)
-        span = max(north - south, east - west)
-        zoom = math.log2(360.0 / span) - 0.4
-    else:
-        south, west, north, east = p["south"], p["west"], p["north"], p["east"]
-        zoom = p.get("zoom", 10.6)
-
+    south, west, north, east, zoom, res = bbox_and_zoom(p, args.radius, args.res)
     cells = cells_in_bbox(south, west, north, east, res)
     if not cells:
         raise SystemExit("no cells in that area — widen --radius or coarsen --res")
@@ -76,8 +61,9 @@ def main() -> None:
     ]
 
     edge_m = h3.average_hexagon_edge_length(res, unit="m")
+    layers = [{"name": "2m temperature", "unit": "°C", "frames": frames}]
     html = to_self_contained_html(
-        frames,
+        layers,
         lat=p["lat"],
         lon=p["lon"],
         zoom=zoom,
@@ -86,7 +72,6 @@ def main() -> None:
         title=f"{args.city.upper()} — 2 m air temperature",
         subtitle=f"Open-Meteo · {args.date} · H3 res {res} · 24 h",
         about=_ABOUT.format(res=res, edge_km=edge_m / 1000),
-        unit="°C",
     )
     out = f"{args.city}_3d.html"
     with open(out, "w") as f:
