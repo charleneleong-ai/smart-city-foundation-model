@@ -5,8 +5,10 @@ lat/lon NetCDF (no per-location rate limit), so thousands of H3 cells come from 
 download. ERA5 is 0.25° (~28 km) native, so it suits regional/continental density (~H3
 res 5–6); fine city detail still wants Open-Meteo.
 
-Live fetch needs a free CDS account + API key (`~/.cdsapirc`) and is queue-based (async) —
-hence the on-disk NetCDF reuse here plus the registry-level CachingAdapter. Heavy deps
+Live fetch needs a free CDS account + API key in `~/.ecmwfdatastoresrc` (the datastores
+client's config, *not* the legacy `~/.cdsapirc`) and the dataset's licence accepted once
+(`Client.accept_licence`). It is queue-based (async) — hence the on-disk NetCDF reuse here
+plus the registry-level CachingAdapter. Heavy deps
 (`ecmwf-datastores-client`, `xarray`, `netcdf4`) are in the `gridded` extra and imported
 lazily, so importing this module is cheap and `_sample` is testable on a synthetic grid.
 """
