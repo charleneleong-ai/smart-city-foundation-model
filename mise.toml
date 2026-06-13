@@ -37,5 +37,5 @@ description = "Render the SP5 verification error map (forecast -> verify -> 3D m
 run = "uv run --extra forecast python apps/demo_verify.py {{arg(name='args', default='')}}"
 
 [tasks.serve]
-description = "Serve the twin API (http://127.0.0.1:8000/docs)"
+description = "Serve the live twin — loads tiles around a movable centre (http://127.0.0.1:8000)"
 run = "uv run --extra app python apps/serve.py"

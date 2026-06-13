@@ -6,6 +6,7 @@ For the full multi-domain twin (Weather + Energy), use apps/demo_twin.py.
 """
 
 import argparse
+import os
 
 from presets import PRESETS
 from render_3d import to_self_contained_html
@@ -24,7 +25,11 @@ def main() -> None:
     ap.add_argument("--date", default="2020-01-15", help="YYYY-MM-DD")
     ap.add_argument("--radius", type=float, default=None, help="km around the preset centre")
     ap.add_argument("--res", type=int, default=None, help="H3 resolution override (0..15)")
+    ap.add_argument("--source", default="open-meteo", choices=["open-meteo", "era5"],
+                    help="era5 = gridded (dense regional, no rate limit; needs CDS key)")
     args = ap.parse_args()
+    if args.source == "era5":
+        os.environ["WEATHER_SOURCE"] = "era5"
 
     p = PRESETS[args.city]
     m = weather_map(f"{args.city.upper()} weather", p, args.date, radius=args.radius, res=args.res)
