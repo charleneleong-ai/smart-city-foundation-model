@@ -3,9 +3,15 @@
 Produces a single HTML file (data inlined, libs via CDN) — opens straight from file://,
 no server, no map token. WebGL 3D-extruded hexes on a dark vector basemap, pitched,
 lit, with hover tooltips.
+
+Hex boundaries are computed in Python (h3.cell_to_boundary) and drawn with deck.gl's
+core PolygonLayer — deck's own H3HexagonLayer relies on a CDN-bundled h3-js that is
+broken in the standalone build, so we avoid it entirely.
 """
 
 import json
+
+import h3
 
 _TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -45,11 +51,11 @@ _TEMPLATE = """<!DOCTYPE html>
     antialias: true,
   });
   map.addControl(new maplibregl.NavigationControl());
-  const layer = new deck.H3HexagonLayer({
-    id: 'h3', data: DATA, extruded: true, filled: true, wireframe: false,
-    getHexagon: d => d.cell, getFillColor: d => d.color,
-    getElevation: d => d.height, elevationScale: __ELEV__, elevationRange: [0, 1],
-    opacity: 0.86, pickable: true, coverage: 0.92,
+  const layer = new deck.PolygonLayer({
+    id: 'hex', data: DATA, extruded: true, filled: true, wireframe: false,
+    getPolygon: d => d.polygon, getFillColor: d => d.color,
+    getElevation: d => d.height, elevationScale: __ELEV__,
+    opacity: 0.86, pickable: true,
     material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
   });
   const overlay = new deck.MapboxOverlay({
@@ -66,6 +72,13 @@ _TEMPLATE = """<!DOCTYPE html>
 """
 
 
+def _hex_ring(cell: str) -> list[list[float]]:
+    """H3 cell -> closed [lng, lat] ring for deck.gl PolygonLayer."""
+    ring = [[lng, lat] for lat, lng in h3.cell_to_boundary(cell)]
+    ring.append(ring[0])
+    return ring
+
+
 def to_self_contained_html(
     records: list[dict],
     *,
@@ -79,9 +92,10 @@ def to_self_contained_html(
     bearing: float = 18.0,
     elevation_scale: float = 3200.0,
 ) -> str:
+    drawable = [{**r, "polygon": _hex_ring(r["cell"])} for r in records]
     vals = [r["value"] for r in records] or [0.0]
     repl = {  # repr() on floats yields valid JS number literals; json.dumps for the data array
-        "__DATA__": json.dumps(records),
+        "__DATA__": json.dumps(drawable),
         "__LON__": repr(lon),
         "__LAT__": repr(lat),
         "__ZOOM__": repr(zoom),
