@@ -38,7 +38,7 @@ def _bbox_around(lat: float, lon: float, radius_km: float) -> tuple[float, float
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Render a day of Open-Meteo temperature as a 3D map.")
-    ap.add_argument("--city", default="london", choices=sorted(PRESETS), help="preset region")
+    ap.add_argument("--city", default="uk", choices=sorted(PRESETS), help="preset region")
     ap.add_argument("--date", default="2020-01-15", help="YYYY-MM-DD")
     ap.add_argument("--radius", type=float, default=None, help="km around the preset centre")
     ap.add_argument("--res", type=int, default=None, help="H3 resolution override (0..15)")
