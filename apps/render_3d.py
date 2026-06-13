@@ -1,12 +1,13 @@
-"""Self-contained deck.gl + MapLibre 3D renderer for H3 layer records.
+"""Self-contained deck.gl + MapLibre 3D renderer for time-series H3 layer records.
 
 Produces a single HTML file (data inlined, libs via CDN) — opens straight from file://,
-no server, no map token. WebGL 3D-extruded hexes on a dark vector basemap, pitched,
-lit, with hover tooltips.
+no server, no map token. WebGL hexes on a dark vector basemap, pitched, lit, with a time
+slider, a 2D/3D toggle, a value legend, an "about" panel, and hover tooltips.
 
 Hex boundaries are computed in Python (h3.cell_to_boundary) and drawn with deck.gl's
 core PolygonLayer — deck's own H3HexagonLayer relies on a CDN-bundled h3-js that is
-broken in the standalone build, so we avoid it entirely.
+broken in the standalone build, so we avoid it entirely. Geometry is embedded once;
+each time frame contributes only per-cell value/color/height arrays.
 """
 
 import json
@@ -23,27 +24,45 @@ _TEMPLATE = """<!DOCTYPE html>
 <script src="https://unpkg.com/deck.gl@9.0.38/dist.min.js"></script>
 <style>
   html, body, #map { margin: 0; height: 100%; width: 100%; background: #0b0b10; }
-  #panel { position: absolute; top: 16px; left: 16px; padding: 12px 14px; z-index: 2;
-    background: rgba(16,18,28,.82); color: #e8eaf2; border-radius: 10px;
-    font: 13px/1.4 -apple-system, system-ui, sans-serif; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
-  #panel b { font-size: 14px; }
-  #bar { height: 8px; width: 180px; margin: 8px 0 4px;
-    background: linear-gradient(90deg, rgb(0,40,255), rgb(255,40,0)); border-radius: 4px; }
-  #scale { display: flex; justify-content: space-between; font-size: 11px; opacity: .8; }
-  .maplibregl-popup-content { background: #11141c; color: #e8eaf2; border-radius: 8px;
-    font: 12px system-ui; padding: 6px 9px; }
-  .maplibregl-popup-tip { display: none; }
+  #panel { position: absolute; top: 16px; left: 16px; width: 300px; padding: 14px 16px; z-index: 2;
+    background: rgba(16,18,28,.86); color: #e8eaf2; border-radius: 12px;
+    font: 13px/1.45 -apple-system, system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+  #panel h1 { font-size: 15px; margin: 0 0 2px; }
+  #panel .sub { opacity: .72; font-size: 12px; }
+  #bar { height: 9px; margin: 11px 0 4px;
+    background: linear-gradient(90deg, rgb(0,40,255), rgb(140,40,160), rgb(255,40,0)); border-radius: 5px; }
+  #scale { display: flex; justify-content: space-between; font-size: 11px; opacity: .82; }
+  #about { font-size: 12px; opacity: .82; margin: 11px 0 0; }
+  #controls { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 11px; }
+  #trow { display: flex; align-items: center; gap: 9px; }
+  #time { flex: 1; accent-color: #ff5a3c; }
+  #tlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 46px; }
+  #toggle { margin-top: 9px; width: 100%; padding: 6px; cursor: pointer; color: #e8eaf2;
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16); border-radius: 7px;
+    font: 12px system-ui; }
+  #toggle:hover { background: rgba(255,255,255,.13); }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div id="panel">
-  <b>__TITLE__</b><br/>__SUBTITLE__
+  <h1>__TITLE__</h1>
+  <div class="sub">__SUBTITLE__</div>
   <div id="bar"></div>
-  <div id="scale"><span>__VMIN__</span><span>__VMAX__</span></div>
+  <div id="scale"><span>__VMIN__ __UNIT__</span><span>__VMAX__ __UNIT__</span></div>
+  <p id="about">__ABOUT__</p>
+  <div id="controls" style="display: __CTRL_DISPLAY__;">
+    <div id="trow">
+      <input id="time" type="range" min="0" max="__MAXFRAME__" value="0" step="1" />
+      <span id="tlabel"></span>
+    </div>
+    <button id="toggle">Toggle 2D / 3D</button>
+  </div>
 </div>
 <script>
-  const DATA = __DATA__;
+  const CELLS = __CELLS__;     // [{polygon:[[lng,lat]...]}]  — static geometry
+  const FRAMES = __FRAMES__;   // [{label, v:[..], c:[[r,g,b,a]..], h:[..]}] per time step
+  let frame = 0, extruded = true;
   const map = new maplibregl.Map({
     container: 'map',
     style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
@@ -51,21 +70,31 @@ _TEMPLATE = """<!DOCTYPE html>
     antialias: true,
   });
   map.addControl(new maplibregl.NavigationControl());
-  const layer = new deck.PolygonLayer({
-    id: 'hex', data: DATA, extruded: true, filled: true, wireframe: false,
-    getPolygon: d => d.polygon, getFillColor: d => d.color,
-    getElevation: d => d.height, elevationScale: __ELEV__,
-    opacity: 0.86, pickable: true,
-    material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
-  });
   const overlay = new deck.MapboxOverlay({
-    layers: [layer],
+    layers: [],
     getTooltip: ({ object }) => object && {
       html: `<b>${object.value.toFixed(1)} __UNIT__</b>`,
       style: { background: '#11141c', color: '#e8eaf2', fontSize: '12px', borderRadius: '6px' },
     },
   });
   map.addControl(overlay);
+
+  function render() {
+    const F = FRAMES[frame];
+    const data = CELLS.map((c, i) => ({ polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] }));
+    overlay.setProps({ layers: [new deck.PolygonLayer({
+      id: 'hex', data, extruded, filled: true, wireframe: false,
+      getPolygon: d => d.polygon, getFillColor: d => d.color,
+      getElevation: d => d.height, elevationScale: extruded ? __ELEV__ : 0,
+      opacity: extruded ? 0.86 : 0.7, pickable: true,
+      material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
+      updateTriggers: { getFillColor: frame, getElevation: [frame, extruded] },
+    })] });
+    document.getElementById('tlabel').textContent = F.label;
+  }
+  document.getElementById('time').addEventListener('input', e => { frame = +e.target.value; render(); });
+  document.getElementById('toggle').addEventListener('click', () => { extruded = !extruded; render(); });
+  render();
 </script>
 </body>
 </html>
@@ -80,33 +109,53 @@ def _hex_ring(cell: str) -> list[list[float]]:
 
 
 def to_self_contained_html(
-    records: list[dict],
+    frames: list[dict],
     *,
     lat: float,
     lon: float,
     title: str = "sctwin",
     subtitle: str = "",
+    about: str = "",
     unit: str = "",
     zoom: float = 10.6,
-    pitch: float = 52.0,
+    pitch: float = 50.0,
     bearing: float = 18.0,
-    elevation_scale: float = 3200.0,
+    elevation_scale: float = 900.0,
 ) -> str:
-    drawable = [{**r, "polygon": _hex_ring(r["cell"])} for r in records]
-    vals = [r["value"] for r in records] or [0.0]
-    repl = {  # repr() on floats yields valid JS number literals; json.dumps for the data array
-        "__DATA__": json.dumps(drawable),
+    """Render time frames as a self-contained 3D map.
+
+    frames: [{"label": str, "records": [{cell, value, color, height}, ...]}, ...].
+    All frames must share the same cells in the same order (geometry is taken from frame 0).
+    """
+    base = frames[0]["records"]
+    cells = [{"polygon": _hex_ring(r["cell"])} for r in base]
+    js_frames = [
+        {
+            "label": f["label"],
+            "v": [r["value"] for r in f["records"]],
+            "c": [r["color"] for r in f["records"]],
+            "h": [r["height"] for r in f["records"]],
+        }
+        for f in frames
+    ]
+    all_vals = [v for f in js_frames for v in f["v"]] or [0.0]
+    repl = {  # repr() on floats yields valid JS number literals; json.dumps for arrays
+        "__CELLS__": json.dumps(cells),
+        "__FRAMES__": json.dumps(js_frames),
         "__LON__": repr(lon),
         "__LAT__": repr(lat),
         "__ZOOM__": repr(zoom),
         "__PITCH__": repr(pitch),
         "__BEARING__": repr(bearing),
         "__ELEV__": repr(elevation_scale),
+        "__MAXFRAME__": str(len(js_frames) - 1),
+        "__CTRL_DISPLAY__": "block" if len(js_frames) > 1 else "none",
         "__TITLE__": title,
         "__SUBTITLE__": subtitle,
+        "__ABOUT__": about,
         "__UNIT__": unit,
-        "__VMIN__": f"{min(vals):.1f}",
-        "__VMAX__": f"{max(vals):.1f}",
+        "__VMIN__": f"{min(all_vals):.1f}",
+        "__VMAX__": f"{max(all_vals):.1f}",
     }
     html = _TEMPLATE
     for k, v in repl.items():
