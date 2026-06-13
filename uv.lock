@@ -800,6 +800,7 @@ source = { editable = "." }
 dependencies = [
     { name = "h3" },
     { name = "httpx" },
+    { name = "numpy" },
     { name = "polars" },
     { name = "pydantic" },
 ]
@@ -817,7 +818,6 @@ dev = [
     { name = "ruff" },
 ]
 forecast = [
-    { name = "numpy" },
     { name = "scikit-learn" },
 ]
 
@@ -828,7 +828,7 @@ requires-dist = [
     { name = "h3", specifier = ">=4.1" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "numpy", marker = "extra == 'forecast'", specifier = ">=1.26" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "polars", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

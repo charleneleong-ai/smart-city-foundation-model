@@ -16,7 +16,7 @@ def h3_layer_records(
 ) -> list[dict]:
     """Records for one timestamp. Pass vmin/vmax to normalize on a shared (e.g. whole-day)
     range so color/height are comparable across frames; otherwise scale per snapshot."""
-    snap = frame.filter(pl.col("time") == at)
+    snap = frame.filter(pl.col("time") == at).sort("cell")  # canonical order so layers align by index
     if snap.height == 0:
         return []
     lo = vmin if vmin is not None else cast(float, snap["value"].min())

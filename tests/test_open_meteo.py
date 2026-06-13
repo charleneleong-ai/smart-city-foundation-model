@@ -33,14 +33,19 @@ def test_fetch_maps_response_to_canonical_frame():
 
 
 @respx.mock
-def test_fetch_multiple_cells_concats():
-    respx.get(ARCHIVE).mock(
+def test_fetch_batches_multiple_cells_in_one_request():
+    # >1 location -> Open-Meteo returns a JSON array, one object per coordinate, in one call
+    route = respx.get(ARCHIVE).mock(
         return_value=httpx.Response(
             200,
-            json={"hourly": {"time": ["2020-01-01T00:00"], "temperature_2m": [3.0]}},
+            json=[
+                {"hourly": {"time": ["2020-01-01T00:00"], "temperature_2m": [3.0]}},
+                {"hourly": {"time": ["2020-01-01T00:00"], "temperature_2m": [9.0]}},
+            ],
         )
     )
     cells = [cell_of(51.5, -0.1, res=7), cell_of(48.85, 2.35, res=7)]
     df = OpenMeteoWeatherAdapter().fetch(cells, datetime(2020, 1, 1), datetime(2020, 1, 1))
+    assert route.call_count == 1  # both cells fetched in a single batched request
     assert df.height == 2
-    assert set(df["cell"].to_list()) == {c.h3 for c in cells}
+    assert dict(zip(df["cell"].to_list(), df["value"].to_list())) == {cells[0].h3: 3.0, cells[1].h3: 9.0}

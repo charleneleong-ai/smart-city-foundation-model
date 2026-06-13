@@ -20,22 +20,26 @@ uv sync --extra dev --extra forecast --extra app
 uv run pytest -q                     # full test suite
 ```
 
-## Map demo (3D H3 + deck.gl + MapLibre)
+## Twin viewer (3D H3 + deck.gl + MapLibre)
 
-Render a day of Open-Meteo temperature over London's H3 grid as a self-contained 3D
-WebGL map (extruded hexes, dark basemap, no token — opens straight from `file://`):
+Self-contained 3D WebGL map (extruded hexes, dark basemap, no token — opens from `file://`)
+with three nested selectors — **Domain** (Weather, Energy, …), **Layer**, and a **time**
+slider — plus an in-map **radius** slider (filters preloaded cells, no re-fetch), Play, and
+2D/3D toggle. Hovering a hex shows *all* layers at once (e.g. demand vs forecast vs error).
 
 ```bash
-mise run map                                       # London -> london_3d.html
-uv run python apps/demo_weather.py --city uk       # region gradient -> uk_3d.html
-uv run python apps/demo_weather.py --city london --radius 40 --res 7   # control extent + detail
-open london_3d.html                                # Play button + time slider + 2D/3D toggle
+mise run twin                                      # full UK twin -> uk_twin_3d.html
+uv run --extra forecast python apps/demo_twin.py --city london --radius 30 --res 8
+open uk_twin_3d.html
 ```
 
-Presets: `london`, `nyc`, `tokyo` (city, H3 res 8), `uk` (region, res 4 — north-south gradient).
-`--radius <km>` sets the area around the preset centre; `--res <0..15>` sets H3 detail
-(coarser = fewer cells = fewer API calls; the demo caps at 400 cells). Extrusion auto-scales
-to hex size so 3D is visible at any zoom.
+- **Weather domain:** 2 m temperature, heating degrees.
+- **Energy domain:** demand (`y_true`), forecast (`y_pred`), |error|, delta (diverging), coverage —
+  from the SP4 GBM + SP5 split-conformal harness; subtitle reports MAE / RMSE / coverage.
+
+Weather-only map: `mise run map` (`apps/demo_weather.py`). Presets: `london`, `nyc`, `tokyo`
+(city, H3 res 8), `uk` (region, res 4). `--radius <km>` + `--res <0..15>` control extent/detail
+(capped at 400 cells = 400 API calls); extrusion auto-scales to hex size.
 
 Or serve the twin and query deck.gl-ready records:
 
