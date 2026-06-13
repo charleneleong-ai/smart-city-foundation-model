@@ -26,9 +26,12 @@ Render a day of Open-Meteo temperature over London's H3 grid as a self-contained
 WebGL map (extruded hexes, dark basemap, no token — opens straight from `file://`):
 
 ```bash
-mise run map            # or: uv run python apps/demo_weather.py  -> weather_3d.html
-open weather_3d.html
+mise run map                                  # London -> london_3d.html
+uv run python apps/demo_weather.py --city uk  # region gradient -> uk_3d.html
+open london_3d.html                           # Play button + time slider + 2D/3D toggle
 ```
+
+Presets: `london`, `nyc`, `tokyo` (city, H3 res 8), `uk` (region, res 4 — north-south gradient).
 
 Or serve the twin and query deck.gl-ready records:
 

@@ -37,10 +37,11 @@ _TEMPLATE = """<!DOCTYPE html>
   #trow { display: flex; align-items: center; gap: 9px; }
   #time { flex: 1; accent-color: #ff5a3c; }
   #tlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 46px; }
-  #toggle { margin-top: 9px; width: 100%; padding: 6px; cursor: pointer; color: #e8eaf2;
+  #btns { display: flex; gap: 8px; margin-top: 9px; }
+  .btn { flex: 1; padding: 6px; cursor: pointer; color: #e8eaf2;
     background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16); border-radius: 7px;
     font: 12px system-ui; }
-  #toggle:hover { background: rgba(255,255,255,.13); }
+  .btn:hover { background: rgba(255,255,255,.13); }
 </style>
 </head>
 <body>
@@ -56,7 +57,10 @@ _TEMPLATE = """<!DOCTYPE html>
       <input id="time" type="range" min="0" max="__MAXFRAME__" value="0" step="1" />
       <span id="tlabel"></span>
     </div>
-    <button id="toggle">Toggle 2D / 3D</button>
+    <div id="btns">
+      <button id="play" class="btn">&#9654; Play</button>
+      <button id="toggle" class="btn">2D / 3D</button>
+    </div>
   </div>
 </div>
 <script>
@@ -92,8 +96,15 @@ _TEMPLATE = """<!DOCTYPE html>
     })] });
     document.getElementById('tlabel').textContent = F.label;
   }
-  document.getElementById('time').addEventListener('input', e => { frame = +e.target.value; render(); });
+  const slider = document.getElementById('time'), playBtn = document.getElementById('play');
+  let timer = null;
+  function setFrame(i) { frame = i; slider.value = i; render(); }
+  slider.addEventListener('input', e => setFrame(+e.target.value));
   document.getElementById('toggle').addEventListener('click', () => { extruded = !extruded; render(); });
+  playBtn.addEventListener('click', () => {
+    if (timer) { clearInterval(timer); timer = null; playBtn.innerHTML = '&#9654; Play'; }
+    else { timer = setInterval(() => setFrame((frame + 1) % FRAMES.length), 420); playBtn.innerHTML = '&#9208; Pause'; }
+  });
   render();
 </script>
 </body>

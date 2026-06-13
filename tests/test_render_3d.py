@@ -39,6 +39,7 @@ def test_multiple_frames_show_slider_and_span_global_range():
     frames = [_frame("00:00", 4.5), _frame("06:00", 9.0), _frame("12:00", 2.0)]
     html = to_self_contained_html(frames, lat=51.5, lon=-0.12, unit="°C")
     assert "display: block;" in html  # slider shown
+    assert 'id="play"' in html  # play button present for animation
     assert 'max="2"' in html  # three frames -> indices 0..2
     assert "00:00" in html and "12:00" in html  # frame labels embedded
     assert "9.0 °C" in html and "1.0 °C" in html  # legend spans the global value range

@@ -5,5 +5,5 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .DS_Store
-weather_3d.html
+*_3d.html
 weather_map.html
