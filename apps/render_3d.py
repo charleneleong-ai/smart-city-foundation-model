@@ -35,6 +35,8 @@ _TEMPLATE = """<!DOCTYPE html>
   #panel .sub { opacity: .72; font-size: 12px; }
   #mapwrap { margin: 11px 0 0; display: __MAP_DISPLAY__; }
   #layerwrap { margin: 8px 0 2px; }
+  #panel label { display: block; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+    opacity: .55; margin: 0 0 3px; }
   select { width: 100%; padding: 5px; color: #e8eaf2; background: rgba(255,255,255,.07);
     border: 1px solid rgba(255,255,255,.16); border-radius: 7px; font: 12px system-ui; }
   #bar { height: 9px; margin: 11px 0 4px;
@@ -57,8 +59,8 @@ _TEMPLATE = """<!DOCTYPE html>
 <div id="panel">
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
-  <div id="mapwrap"><select id="mapsel">__MAP_OPTIONS__</select></div>
-  <div id="layerwrap"><select id="layer"></select></div>
+  <div id="mapwrap"><label>Domain</label><select id="mapsel">__MAP_OPTIONS__</select></div>
+  <div id="layerwrap"><label>Layer</label><select id="layer"></select></div>
   <div id="bar"></div>
   <div id="scale"><span id="vmin"></span><span id="vmax"></span></div>
   <p id="about">__ABOUT__</p>
