@@ -187,17 +187,66 @@ Each sub-project gets its own spec → plan → implementation cycle.
 | SP2 | VLM perception (imagery → attributes) | SP1 | parallel with SP3 |
 | SP3 | LLM state-fusion → city state graph | SP1 | parallel with SP2 |
 | SP4 | **Energy world model** (first vertical) | SP1–3 | matches project focus |
-| SP5 | **Verification & calibration harness** | SP1 | built *alongside* SP4 |
+| SP5 | **Verification & calibration harness** (also: the verifiable-reasoning *environment*) | SP1 | built *alongside* SP4 |
 | SP6 | Scenario / planner agent | SP4–5 | last |
+| SP7 | **Urban reasoning model** — RLVR against the SP5 environment | SP4–5 | the research moat (see Novelty) |
 
 **Build order:** SP1 → (SP2 ∥ SP3) → **SP4 + SP5 together** as the first end-to-end
-*verifiable energy vertical* → SP6 → then generalize the same pattern to traffic / heat
-/ water layers.
+*verifiable energy vertical* → SP6 → **SP7** (reasoning model trained against the SP5
+verifiable-reward environment) → then generalize the same pattern to traffic / heat /
+water layers.
 
 The first milestone worth defending is **SP4+SP5**: a district-level energy predictor
 trained with verifiable rewards, backtested against held-out real meter data, emitting
 calibrated intervals. Everything else is scaffolding around making that vertical real,
 then replicating the pattern.
+
+## Novelty & research contributions
+
+The perception/embedding/forecasting layers are *not* novel — geospatial FMs (Prithvi,
+Clay), CityFM, and the urban spatiotemporal-forecasting line (UrbanGPT, LibCity) already
+cover them, and SP2–SP4 should **reuse** rather than reinvent them. The contribution is
+the **verifiable-reasoning** layer (SP5 as an environment + SP7 as the model):
+
+> **Thesis.** Treat the city as a *verifiable-reward (RLVR) environment* — train a
+> reasoning model whose multi-step intervention claims ("retrofit district D cuts load
+> by X%") are scored by physics simulators (EnergyPlus / CityLearn / SUMO) and held-out
+> real meter/sensor data, not by forecast error alone. RLVR works for math/code because
+> the answer is checkable; a city is *also* checkable. The novelty is the **combination**
+> (physics-sim-as-verifier + RLVR + urban + causal), not any single ingredient.
+
+Five mechanisms, with literature status from a 2026-06 targeted survey (confidence tagged;
+*not* adversarially verified — re-check before publication):
+
+| # | Mechanism | Status (conf.) | Closest prior art to position against |
+|---|---|---|---|
+| 1 | RLVR where the verifier is a **physics sim + real meters** | **unclaimed** (high) | *Outcome-based RL to Predict the Future* (RLVR for forecasting, no physical sim/urban) |
+| 2 | Interleaved **simulator-grounded chain-of-thought** (AlphaGeometry-style) | **contested** (med) | OpenCity, Urban Generative Intelligence, LLMLight, PhysicsAgentABM — but they use the sim as a *sandbox*, not a *step-verifier for reward* |
+| 3 | **Causal/interventional reward** (natural experiments) vs forecast accuracy | **unclaimed** (high) | LLM-agent papers do qualitative counterfactual *analysis*, not interventional reward training |
+| 4 | **Conservation-law process rewards** for physical reasoning | **likely open** (med-high) | process-reward models + PINNs exist *separately*, not combined for reasoning steps |
+| 5 | **Self-improving twin** via reasoning-discovered hypotheses + active sensing | **likely open** (med) | digital-twin+LLM closed loops do what-if; the hypothesis→active-sensing→update loop appears open |
+
+**Honest framing.** Mechanism 2 is the most contested — there is substantial
+"LLM-agent-in-city-simulator" work, so SP7 must be framed as *physics-verified reasoning
+reward*, not merely "LLM + simulator". Mechanisms 1 and 3 are the strongest claims. The
+closest papers are very recent (Feb–Apr 2026); the survey was a lighter check without the
+adversarial multi-vote verification, so treat all statuses as provisional.
+
+**Related work to cite:** geospatial FMs (Prithvi, Clay, SatMAE); CityFM (CIKM 2024);
+urban ST forecasting (UrbanGPT, LibCity, GPD); *Outcome-based RL to Predict the Future*;
+PhysicsAgentABM; OpenCity / Urban Generative Intelligence; USTBench & STARK (ST-reasoning
+benchmarks); Telecom World Models; *Digital Twin AI: from LLMs to World Models* (Jan 2026).
+
+### SP7 — Urban reasoning model (the moat)
+
+- **Job:** an LLM reasoner that answers interventional planning queries with a *grounded,
+  verifiable* chain — each step may call the L4 world model / SP5 oracle, and the final
+  claim is scored against simulator + real measurements.
+- **Training:** RLVR (GRPO/PPO) against the **SP5 environment** as the reward source.
+  Reuses the existing reasoning/RLVR stack; points it at the city instead of math/code.
+- **Validation:** interventional validation (SP5) — score intervention predictions
+  against real before/after natural experiments, not just forecast error.
+- **Depends on:** SP4 (world model to call) + SP5 (the verifiable-reward environment).
 
 ## Privacy & governance (design-in, not retrofit)
 
