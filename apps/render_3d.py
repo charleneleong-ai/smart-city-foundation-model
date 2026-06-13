@@ -105,7 +105,7 @@ _TEMPLATE = """<!DOCTYPE html>
 
   const slider = document.getElementById('time'), radius = document.getElementById('radius');
   const playBtn = document.getElementById('play');
-  let visRadius = 0, timer = null;  // set from radius.max once distances are computed
+  let visRadius = 0, timer = null;  // km radius around the (movable) centre; set once distances are computed
   let center = [MAPS[0].lon, MAPS[0].lat], cellDist = [];
   const M = () => MAPS[mapIdx];
   const marker = new maplibregl.Marker({ color: '#ff5a3c' }).setLngLat(center).addTo(map);
@@ -120,7 +120,7 @@ _TEMPLATE = """<!DOCTYPE html>
     cellDist = M().cells.map(c => hav(center[0], center[1], c.cen[0], c.cen[1]));
     radius.max = Math.ceil(Math.max(...cellDist, 1));
   }
-  function setCenter(lngLat) {  // click a hex -> move the radius centre there
+  function setCenter(lngLat) {  // click a hex -> move the radius centre there (the circle follows it)
     center = [lngLat[0], lngLat[1]]; marker.setLngLat(center);
     recompute(); visRadius = Math.min(visRadius, +radius.max); radius.value = visRadius; render();
   }
@@ -128,7 +128,7 @@ _TEMPLATE = """<!DOCTYPE html>
   function render() {
     const m = M(), L = m.layers[layerIdx], F = L.frames[frame];
     const data = [];
-    m.cells.forEach((c, i) => {  // preloaded cells, filtered by distance from the centre (no re-fetch)
+    m.cells.forEach((c, i) => {  // cells within visRadius km of the (movable) centre — radius follows the click
       if (cellDist[i] <= visRadius) data.push({ idx: i, polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] });
     });
     overlay.setProps({ layers: [new deck.PolygonLayer({
@@ -141,7 +141,7 @@ _TEMPLATE = """<!DOCTYPE html>
       updateTriggers: { getFillColor: [mapIdx, layerIdx, frame], getElevation: [mapIdx, layerIdx, frame, extruded] },
     })] });
     document.getElementById('tlabel').textContent = F.label;
-    document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ')';
+    document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
   }
