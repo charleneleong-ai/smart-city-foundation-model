@@ -88,9 +88,12 @@ and real measurements provide checkable ground truth.
 
 - **Job:** imagery → physical attributes: building footprints, heights, roof area &
   solar potential, land use, construction progress, vegetation/imperviousness.
-- **Open models:** geospatial FMs **Prithvi** (NASA/IBM), **Clay**, **SatMAE**,
-  **Satlas**; **SAM 2** + open building-footprint models (Microsoft/Google open
-  footprints); **Qwen2.5-VL / InternVL** for semantic extraction.
+- **Open models (as of 2026-06):** **AlphaEarth Foundations** (Google, 2025) is current
+  SOTA — time-continuous embeddings over 9 sensors, shipped as the "Satellite Embedding"
+  dataset on Google Earth Engine; open alternatives **Prithvi-EO-2.0** (NASA/IBM),
+  **Clay v1.5**, SatMAE/Satlas. **SAM 2** + open building-footprint models (Microsoft/
+  Google); **Qwen2.5-VL / InternVL** for semantic extraction. City-entity representations:
+  **CityFM** (OSM), **GeoLink** (RS+OSM), **UrbanFusion** — reuse for L2/L3, don't reinvent.
 - **Interface:** writes attributes back to L1 cells with provenance + confidence.
 
 ### L3 — State fusion (LLM → city state graph)
@@ -106,12 +109,15 @@ and real measurements provide checkable ground truth.
 
 - **Job:** learn the city's temporal dynamics and roll out forecasts &
   **counterfactuals** ("build a 40-storey tower on parcel P → district load Δ").
-- **Model family / menu:** spatiotemporal GNN / transformer / neural operator over the
-  H3 graph. Precedent for spatiotemporal rollout: open ML weather models **GraphCast /
-  Aurora / FourCastNet**. For the *temporal* backbone and a strong zero/few-shot
-  baseline, pretrained **time-series foundation models — TimesFM (Google), Chronos
-  (Amazon), Moirai, Lag-Llama** — are directly relevant to load forecasting and must be
-  evaluated before (and against) any bespoke world model.
+- **Model family / menu (as of 2026-06):** spatiotemporal GNN / transformer / neural
+  operator over the H3 graph. Precedent for spatiotemporal rollout: ML weather models
+  **GenCast** (DeepMind diffusion ensemble — beats ECMWF ENS on ~97% of targets),
+  **Aurora** (Microsoft foundation model), **WeatherNext 2** (Google), **GraphCast**.
+  For the *temporal* backbone and a strong zero/few-shot baseline, pretrained
+  **time-series foundation models — Chronos-2, TimesFM 2.0, Moirai-2, Chronos-Bolt** —
+  lead recent energy-load benchmarks and must be evaluated before (and against) any
+  bespoke model. Note **Chronos-2 emits well-calibrated intervals (~95% @ 90% nominal)** —
+  it partly subsumes the SP5 conformal layer for the forecasting head.
 - **Causal requirement (non-negotiable for L5):** counterfactual "what if we build X"
   is an **interventional** *do(X)* query, not a forecast. A model trained on
   observational data learns correlations and will give confidently wrong intervention
@@ -220,21 +226,29 @@ Five mechanisms, with literature status from a 2026-06 targeted survey (confiden
 
 | # | Mechanism | Status (conf.) | Closest prior art to position against |
 |---|---|---|---|
-| 1 | RLVR where the verifier is a **physics sim + real meters** | **unclaimed** (high) | *Outcome-based RL to Predict the Future* (RLVR for forecasting, no physical sim/urban) |
+| 1 | RLVR where the verifier is a **physics sim + real meters** | ⚠️ **partially claimed** (med) | **RLVR-World** (2025) already applies RLVR to text & vision *world models* (F1/LPIPS verifiers). Open twist = *physics-simulator + real-measurement* verifier on an *urban* world model. Also *Outcome-based RL to Predict the Future* (RLVR forecasting, no sim) |
 | 2 | Interleaved **simulator-grounded chain-of-thought** (AlphaGeometry-style) | **contested** (med) | OpenCity, Urban Generative Intelligence, LLMLight, PhysicsAgentABM — but they use the sim as a *sandbox*, not a *step-verifier for reward* |
 | 3 | **Causal/interventional reward** (natural experiments) vs forecast accuracy | **unclaimed** (high) | LLM-agent papers do qualitative counterfactual *analysis*, not interventional reward training |
 | 4 | **Conservation-law process rewards** for physical reasoning | **likely open** (med-high) | process-reward models + PINNs exist *separately*, not combined for reasoning steps |
 | 5 | **Self-improving twin** via reasoning-discovered hypotheses + active sensing | **likely open** (med) | digital-twin+LLM closed loops do what-if; the hypothesis→active-sensing→update loop appears open |
 
-**Honest framing.** Mechanism 2 is the most contested — there is substantial
-"LLM-agent-in-city-simulator" work, so SP7 must be framed as *physics-verified reasoning
-reward*, not merely "LLM + simulator". Mechanisms 1 and 3 are the strongest claims. The
-closest papers are very recent (Feb–Apr 2026); the survey was a lighter check without the
-adversarial multi-vote verification, so treat all statuses as provisional.
+**Honest framing (updated 2026-06).** **RLVR-World (2025) repositions mechanism 1** —
+RLVR on world models is *no longer unclaimed*; our defensible contribution is the
+*physics-simulator + real-measurement verifier on an urban world model*, not "RLVR on
+world models" per se. So **mechanisms 3 (causal/interventional reward) and 4
+(conservation-law process rewards) are now the strongest claims.** Mechanism 2 remains
+contested (substantial "LLM-agent-in-city-simulator" work — frame SP7 as *physics-verified
+reasoning reward*, not "LLM + simulator"). Caveat (Yue et al. 2025): RLVR mostly *sharpens
+reasoning patterns already in the base model* rather than inventing new ones — temper
+"teaches new reasoning" claims. Statuses are provisional (lighter survey, no adversarial
+multi-vote verification).
 
-**Related work to cite:** geospatial FMs (Prithvi, Clay, SatMAE); CityFM (CIKM 2024);
-urban ST forecasting (UrbanGPT, LibCity, GPD); *Outcome-based RL to Predict the Future*;
-PhysicsAgentABM; OpenCity / Urban Generative Intelligence; USTBench & STARK (ST-reasoning
+**Related work to cite (2026-06):** geo-FMs **AlphaEarth Foundations**, Prithvi-EO-2.0,
+Clay; urban FMs **CityFM**, **UrbanMFM**, **UrbanFusion**, **GeoLink**, ReFound;
+**CityBench** (LLM-as-city-world-model — closest framing); TS-FMs Chronos-2 / TimesFM 2.0;
+weather GenCast / Aurora; **RLVR-World** (RLVR on world models); urban ST forecasting
+(UrbanGPT, LibCity, GPD); *Outcome-based RL to Predict the Future*; PhysicsAgentABM;
+OpenCity / Urban Generative Intelligence; USTBench & STARK (ST-reasoning
 benchmarks); Telecom World Models; *Digital Twin AI: from LLMs to World Models* (Jan 2026).
 
 ### SP7 — Urban reasoning model (the moat)
@@ -290,10 +304,10 @@ pretrain a foundation model from scratch; cap LLMs/VLMs at 7–8B, world models 
 
 | Layer | Model(s) | Params | Fits 1×A100 80GB? | Strategy |
 |---|---|---|---|---|
-| L2 perception | Prithvi-EO / Clay / SatMAE | 0.1–0.6B | ✅ | full fine-tune |
+| L2 perception | AlphaEarth (embeddings) / Prithvi-EO-2.0 / Clay v1.5 | 0.1–0.6B | ✅ | embeddings off-the-shelf / full fine-tune |
 | L2 perception | SAM 2 | ~0.2B | ✅ | inference + decoder fine-tune |
 | L2 / L3 / L5 | Qwen2.5-VL-7B, Llama-3.1-8B, Qwen2.5-7B | 7–8B | ✅ | **QLoRA** (train) / 4-bit (infer) |
-| L4 world model | TimesFM, Chronos, Moirai, Lag-Llama | 0.01–0.7B | ✅ | fine-tune (often zero-shot first) |
+| L4 world model | Chronos-2, TimesFM 2.0, Moirai-2 | 0.01–0.7B | ✅ | fine-tune (often zero-shot first) |
 | L4 world model | spatiotemporal GNN / neural operator | <0.1B | ✅ | train from scratch (data-bound, not param-bound) |
 | L5 agent | instruct LLM | 7–8B local *or* API | ✅ | **inference only**, no training |
 | Spine | RLVR (GRPO/PPO) on the world model | <1B target | ✅ | LoRA + vLLM gen; tight but fits |
