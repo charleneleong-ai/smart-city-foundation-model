@@ -14,7 +14,6 @@ the standalone build.
 """
 
 import json
-import math
 
 import h3
 
@@ -48,10 +47,14 @@ _TEMPLATE = """<!DOCTYPE html>
   #time, #radius { flex: 1; accent-color: #ff5a3c; }
   #tlabel, #rlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 92px; font-size: 11px; }
   #btns { display: flex; gap: 8px; margin-top: 3px; }
-  .btn { flex: 1; padding: 6px; cursor: pointer; color: #e8eaf2;
+  #lrow { display: flex; gap: 6px; }
+  .btn, .mini { padding: 6px; cursor: pointer; color: #e8eaf2;
     background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16); border-radius: 7px;
     font: 12px system-ui; }
-  .btn:hover { background: rgba(255,255,255,.13); }
+  .btn { flex: 1; }
+  .mini { flex: 0 0 30px; }
+  .btn:hover, .mini:hover { background: rgba(255,255,255,.13); }
+  #hint { font-size: 10.5px; opacity: .5; margin-top: 9px; }
 </style>
 </head>
 <body>
@@ -60,7 +63,9 @@ _TEMPLATE = """<!DOCTYPE html>
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
   <div id="mapwrap"><label>Domain</label><select id="mapsel">__MAP_OPTIONS__</select></div>
-  <div id="layerwrap"><label>Layer</label><select id="layer"></select></div>
+  <div id="layerwrap"><label>Layer</label>
+    <div id="lrow"><button id="lprev" class="mini">&#9664;</button><select id="layer"></select><button id="lnext" class="mini">&#9654;</button></div>
+  </div>
   <div id="bar"></div>
   <div id="scale"><span id="vmin"></span><span id="vmax"></span></div>
   <p id="about">__ABOUT__</p>
@@ -71,6 +76,7 @@ _TEMPLATE = """<!DOCTYPE html>
       <button id="play" class="btn">&#9654; Play</button>
       <button id="toggle" class="btn">2D / 3D</button>
     </div>
+    <div id="hint">Click a hex to move the radius centre &#8853; · [ ] switch layer · &#8592; &#8594; step time</div>
   </div>
 </div>
 <script>
@@ -99,20 +105,38 @@ _TEMPLATE = """<!DOCTYPE html>
 
   const slider = document.getElementById('time'), radius = document.getElementById('radius');
   const playBtn = document.getElementById('play');
-  let visRadius = MAPS[0].maxdist, timer = null;
+  let visRadius = 0, timer = null;  // set from radius.max once distances are computed
+  let center = [MAPS[0].lon, MAPS[0].lat], cellDist = [];
   const M = () => MAPS[mapIdx];
+  const marker = new maplibregl.Marker({ color: '#ff5a3c' }).setLngLat(center).addTo(map);
+
+  function hav(aLng, aLat, bLng, bLat) {  // km between two [lng,lat]
+    const r = Math.PI / 180, R = 6371;
+    const dp = (bLat - aLat) * r, dl = (bLng - aLng) * r;
+    const x = Math.sin(dp / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dl / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(x));
+  }
+  function recompute() {  // distances from the (movable) centre to each cell
+    cellDist = M().cells.map(c => hav(center[0], center[1], c.cen[0], c.cen[1]));
+    radius.max = Math.ceil(Math.max(...cellDist, 1));
+  }
+  function setCenter(lngLat) {  // click a hex -> move the radius centre there
+    center = [lngLat[0], lngLat[1]]; marker.setLngLat(center);
+    recompute(); visRadius = Math.min(visRadius, +radius.max); radius.value = visRadius; render();
+  }
 
   function render() {
     const m = M(), L = m.layers[layerIdx], F = L.frames[frame];
     const data = [];
-    m.cells.forEach((c, i) => {  // preloaded cells, filtered by the radius slider (no re-fetch)
-      if (c.dist <= visRadius) data.push({ idx: i, polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] });
+    m.cells.forEach((c, i) => {  // preloaded cells, filtered by distance from the centre (no re-fetch)
+      if (cellDist[i] <= visRadius) data.push({ idx: i, polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] });
     });
     overlay.setProps({ layers: [new deck.PolygonLayer({
       id: 'hex', data, extruded, filled: true, wireframe: false,
       getPolygon: d => d.polygon, getFillColor: d => d.color,
       getElevation: d => d.height, elevationScale: extruded ? m.elev : 0,
       opacity: extruded ? 0.86 : 0.7, pickable: true,
+      onClick: info => { if (info.coordinate) setCenter(info.coordinate); },
       material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
       updateTriggers: { getFillColor: [mapIdx, layerIdx, frame], getElevation: [mapIdx, layerIdx, frame, extruded] },
     })] });
@@ -132,14 +156,31 @@ _TEMPLATE = """<!DOCTYPE html>
     m.layers.forEach((L, j) => { (groups[L.group || ''] ||= []).push(`<option value="${j}">${L.name}</option>`); });
     document.getElementById('layer').innerHTML = Object.entries(groups)
       .map(([g, opts]) => g ? `<optgroup label="${g}">${opts.join('')}</optgroup>` : opts.join('')).join('');
-    radius.max = m.maxdist; radius.value = m.maxdist; visRadius = m.maxdist;
+    center = [m.lon, m.lat]; marker.setLngLat(center); recompute();
+    visRadius = +radius.max; radius.value = visRadius;
     slider.max = m.layers[0].frames.length - 1; slider.value = 0;
     render();
   }
 
+  function selectLayer(i) {
+    layerIdx = (i + M().layers.length) % M().layers.length;
+    document.getElementById('layer').value = layerIdx;
+    slider.max = M().layers[layerIdx].frames.length - 1; setFrame(0);
+  }
+  function stepTime(d) {
+    const n = M().layers[layerIdx].frames.length; setFrame((frame + d + n) % n);
+  }
+
   document.getElementById('mapsel').addEventListener('change', e => selectMap(+e.target.value));
-  document.getElementById('layer').addEventListener('change', e => {
-    layerIdx = +e.target.value; slider.max = M().layers[layerIdx].frames.length - 1; setFrame(0);
+  document.getElementById('layer').addEventListener('change', e => selectLayer(+e.target.value));
+  document.getElementById('lprev').addEventListener('click', () => selectLayer(layerIdx - 1));
+  document.getElementById('lnext').addEventListener('click', () => selectLayer(layerIdx + 1));
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;  // don't double-handle
+    if (e.key === '[') selectLayer(layerIdx - 1);
+    else if (e.key === ']') selectLayer(layerIdx + 1);
+    else if (e.key === 'ArrowLeft') stepTime(-1);
+    else if (e.key === 'ArrowRight') stepTime(1);
   });
   slider.addEventListener('input', e => setFrame(+e.target.value));
   radius.addEventListener('input', e => { visRadius = +e.target.value; render(); });
@@ -162,13 +203,6 @@ def _hex_ring(cell: str) -> list[list[float]]:
     return ring
 
 
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * 6371.0 * math.asin(math.sqrt(a))
-
-
 def _js_layer(layer: dict) -> dict:
     frames = [
         {
@@ -188,13 +222,11 @@ def _js_map(m: dict) -> dict:
     cells = []
     for r in m["layers"][0]["frames"][0]["records"]:
         clat, clon = h3.cell_to_latlng(r["cell"])
-        cells.append({"polygon": _hex_ring(r["cell"]),
-                      "dist": round(_haversine_km(m["lat"], m["lon"], clat, clon), 1)})
-    max_dist = max((c["dist"] for c in cells), default=1.0)
-    return {
+        cells.append({"polygon": _hex_ring(r["cell"]), "cen": [round(clon, 5), round(clat, 5)]})
+    return {  # distance from the (movable) centre is computed client-side from each cell's "cen"
         "name": m["name"], "subtitle": m.get("subtitle", ""),
         "lat": m["lat"], "lon": m["lon"], "zoom": m["zoom"], "pitch": m.get("pitch", 50.0),
-        "elev": m.get("elevation_scale", 900.0), "maxdist": int(math.ceil(max_dist)),
+        "elev": m.get("elevation_scale", 900.0),
         "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
     }
 

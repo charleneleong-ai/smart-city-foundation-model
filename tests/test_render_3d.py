@@ -61,15 +61,15 @@ def test_multiple_maps_show_domain_dropdown_with_options():
     assert '"name": "demand"' in html and '"name": "forecast"' in html
 
 
-def test_radius_slider_embeds_per_cell_distance_and_maxdist():
-    far = h3.latlng_to_cell(51.60, 0.00, 8)
+def test_radius_filter_and_movable_centre_wired():
     records = [
         {"cell": _HOT, "value": 1.0, "color": [0, 0, 0, 1], "height": 0.0},
-        {"cell": far, "value": 2.0, "color": [0, 0, 0, 1], "height": 1.0},
+        {"cell": _COLD, "value": 2.0, "color": [0, 0, 0, 1], "height": 1.0},
     ]
     html = to_self_contained_html([_map("m", [_layer("t", [{"label": "a", "records": records}])])])
     assert 'id="radius"' in html  # in-map radius slider present
-    assert '"dist":' in html and '"maxdist":' in html  # per-cell distance + max embedded (client-side filter)
+    assert '"cen":' in html  # per-cell centroid embedded -> client-side distance from a movable centre
+    assert "maplibregl.Marker" in html and "function setCenter" in html  # click-to-recentre wired
 
 
 def test_layer_spans_its_global_value_range():
