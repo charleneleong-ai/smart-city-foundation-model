@@ -44,6 +44,18 @@ def test_single_layer_hides_dropdown():
     assert html.count("<option") == 1
 
 
+def test_radius_slider_embeds_per_cell_distance():
+    far = h3.latlng_to_cell(51.60, 0.00, 8)
+    records = [
+        {"cell": _HOT, "value": 1.0, "color": [0, 0, 0, 1], "height": 0.0},
+        {"cell": far, "value": 2.0, "color": [0, 0, 0, 1], "height": 1.0},
+    ]
+    html = to_self_contained_html([_layer("t", "x", [{"label": "a", "records": records}])], lat=51.5, lon=-0.1)
+    assert 'id="radius"' in html  # in-map radius slider present
+    assert "__MAXDIST__" not in html  # max distance placeholder filled
+    assert '"dist":' in html  # per-cell distance embedded for client-side filtering (no re-fetch)
+
+
 def test_multiple_layers_show_dropdown_with_options():
     layers = [_layer("error", "x", [_frame("00:00", 4.5)]), _layer("coverage", "in", [_frame("00:00", 1.0)])]
     html = to_self_contained_html(layers, lat=51.5, lon=-0.12)

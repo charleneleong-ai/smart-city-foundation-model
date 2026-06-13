@@ -12,6 +12,7 @@ value/color/height arrays.
 """
 
 import json
+import math
 
 import h3
 
@@ -60,6 +61,10 @@ _TEMPLATE = """<!DOCTYPE html>
   <p id="about">__ABOUT__</p>
   <div id="controls">
     <div id="trow">
+      <input id="radius" type="range" min="1" max="__MAXDIST__" value="__MAXDIST__" step="1" />
+      <span id="rlabel"></span>
+    </div>
+    <div id="trow">
       <input id="time" type="range" min="0" value="0" step="1" />
       <span id="tlabel"></span>
     </div>
@@ -90,11 +95,15 @@ _TEMPLATE = """<!DOCTYPE html>
   map.addControl(overlay);
 
   const slider = document.getElementById('time'), playBtn = document.getElementById('play');
-  let timer = null;
+  const radius = document.getElementById('radius');
+  let visRadius = +radius.max, timer = null;
 
   function render() {
     const L = LAYERS[layerIdx], F = L.frames[frame];
-    const data = CELLS.map((c, i) => ({ polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] }));
+    const data = [];
+    CELLS.forEach((c, i) => {  // preloaded cells, filtered by the radius slider (no re-fetch)
+      if (c.dist <= visRadius) data.push({ polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] });
+    });
     overlay.setProps({ layers: [new deck.PolygonLayer({
       id: 'hex', data, extruded, filled: true, wireframe: false,
       getPolygon: d => d.polygon, getFillColor: d => d.color,
@@ -104,10 +113,12 @@ _TEMPLATE = """<!DOCTYPE html>
       updateTriggers: { getFillColor: [layerIdx, frame], getElevation: [layerIdx, frame, extruded] },
     })] });
     document.getElementById('tlabel').textContent = F.label;
+    document.getElementById('rlabel').textContent = '≤ ' + visRadius + ' km (' + data.length + ')';
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
   }
   function setFrame(i) { frame = i; slider.value = i; render(); }
+  radius.addEventListener('input', e => { visRadius = +e.target.value; render(); });
 
   document.getElementById('layer').addEventListener('change', e => {
     layerIdx = +e.target.value;
@@ -134,6 +145,13 @@ def _hex_ring(cell: str) -> list[list[float]]:
     ring = [[lng, lat] for lat, lng in h3.cell_to_boundary(cell)]
     ring.append(ring[0])
     return ring
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * 6371.0 * math.asin(math.sqrt(a))
 
 
 def _js_layer(layer: dict) -> dict:
@@ -175,7 +193,11 @@ def to_self_contained_html(
     All frames across all layers must share the same cells in the same order
     (geometry is taken from the first frame of the first layer).
     """
-    cells = [{"polygon": _hex_ring(r["cell"])} for r in layers[0]["frames"][0]["records"]]
+    cells = []
+    for r in layers[0]["frames"][0]["records"]:
+        clat, clon = h3.cell_to_latlng(r["cell"])
+        cells.append({"polygon": _hex_ring(r["cell"]), "dist": round(_haversine_km(lat, lon, clat, clon), 1)})
+    max_dist = max((c["dist"] for c in cells), default=1.0)
     js_layers = [_js_layer(layer) for layer in layers]
     n_frames = len(js_layers[0]["frames"])
     options = "".join(f'<option value="{i}">{layer["name"]}</option>' for i, layer in enumerate(layers))
@@ -189,6 +211,7 @@ def to_self_contained_html(
         "__PITCH__": repr(pitch),
         "__BEARING__": repr(bearing),
         "__ELEV__": repr(elevation_scale),
+        "__MAXDIST__": str(int(math.ceil(max_dist))),
         "__LAYER_DISPLAY__": "block" if len(layers) > 1 else "none",
         "__CTRL_DISPLAY__": "block" if n_frames > 1 else "none",
         "__TITLE__": title,

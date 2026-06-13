@@ -6,7 +6,7 @@ from sctwin.forecast.baselines import Forecaster
 from sctwin.forecast.features import to_xy
 from sctwin.verify.conformal import ConformalCalibrator
 
-RESULT_FIELDS = ["y_true", "y_pred", "abs_error", "lo", "hi", "covered"]
+RESULT_FIELDS = ["y_true", "y_pred", "error", "abs_error", "lo", "hi", "covered"]
 
 
 def verification_frame(
@@ -36,6 +36,7 @@ def verification_frame(
     return test.select("cell", "time").with_columns(
         pl.Series("y_true", yte),
         pl.Series("y_pred", pred),
+        pl.Series("error", pred - yte),  # signed: + over-predict, - under-predict
         pl.Series("abs_error", np.abs(pred - yte)),
         pl.Series("lo", lo),
         pl.Series("hi", hi),

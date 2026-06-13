@@ -36,13 +36,23 @@ _ABOUT = (
     "Demand is synthetic — diurnal cycle + a west→east noise gradient — over a real H3 "
     "grid. Press Play to step through the held-out test hours."
 )
-# field -> (display name, unit, force vmin)
+# field -> (display name, unit, range mode): zero = [0, max]; sym = [-M, +M] diverging; auto
 _LAYERS = [
-    ("abs_error", "|error|", "load", 0.0),
-    ("covered", "covered", "in/out", None),
-    ("y_pred", "prediction", "load", None),
-    ("y_true", "actual", "load", None),
+    ("abs_error", "|error|", "load", "zero"),
+    ("error", "delta (pred−actual)", "load", "sym"),
+    ("y_pred", "prediction", "load", "auto"),
+    ("y_true", "actual", "load", "auto"),
+    ("covered", "covered", "in/out", "auto"),
 ]
+
+
+def _range(values: pl.Series, mode: str) -> tuple[float, float]:
+    if mode == "zero":
+        return 0.0, float(values.max())
+    if mode == "sym":
+        m = float(values.abs().max()) or 1.0
+        return -m, m  # diverging around 0: blue = under-predict, red = over-predict
+    return float(values.min()), float(values.max())
 
 
 def _synth_load(wx: pl.DataFrame, res: int) -> pl.DataFrame:
@@ -83,16 +93,17 @@ def main() -> None:
 
     supervised = build_supervised(_synth_load(wx, res), wx)
     results = verification_frame(GBMForecaster(), supervised, FEATURE_COLS, alpha=0.1)
+    mae = float(results["abs_error"].mean())
+    rmse = float((results["abs_error"] ** 2).mean()) ** 0.5
     coverage = results["covered"].mean()
 
     # one map layer per result field; share the test-hour time axis
     res_num = results.with_columns(pl.col("covered").cast(pl.Float64))
     times = res_num.select(pl.col("time").unique().sort()).to_series().to_list()
     layers = []
-    for field, name, unit, force_min in _LAYERS:
+    for field, name, unit, mode in _LAYERS:
         flayer = as_layer(res_num, field)
-        vmin = force_min if force_min is not None else float(flayer["value"].min())
-        vmax = float(flayer["value"].max())
+        vmin, vmax = _range(flayer["value"], mode)
         frames = [
             {"label": t.strftime("%m-%d %H:%M"), "records": h3_layer_records(flayer, at=t, vmin=vmin, vmax=vmax)}
             for t in times
@@ -107,7 +118,7 @@ def main() -> None:
         pitch=p.get("pitch", 50.0),
         elevation_scale=4.0 * h3.average_hexagon_edge_length(res, unit="m"),
         title=f"{args.city.upper()} — load forecast verification",
-        subtitle=f"SP5 · GBM · split-conformal · coverage {coverage:.0%} · {len(times)} test h",
+        subtitle=f"SP5 · GBM · MAE {mae:.1f} · RMSE {rmse:.1f} · coverage {coverage:.0%} · {len(times)} test h",
         about=_ABOUT,
     )
     out = f"{args.city}_verify_3d.html"

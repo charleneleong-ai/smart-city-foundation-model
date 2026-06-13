@@ -25,8 +25,10 @@ def _frame(n: int) -> pl.DataFrame:
 
 def test_results_frame_has_expected_columns_and_covered_logic():
     res = verification_frame(DegreeDayRegressor(), _frame(400), ["hdd", "cdd"], alpha=0.1)
-    for col in ["cell", "time", "y_true", "y_pred", "abs_error", "lo", "hi", "covered"]:
+    for col in ["cell", "time", "y_true", "y_pred", "error", "abs_error", "lo", "hi", "covered"]:
         assert col in res.columns
+    # signed error and its magnitude are consistent
+    assert (res["abs_error"] == res["error"].abs()).all()
     # independent check: a point is covered iff its abs_error is within the interval
     # half-width — cross-checks covered against abs_error + (hi-lo), not the lo/hi formula
     chk = res.with_columns(

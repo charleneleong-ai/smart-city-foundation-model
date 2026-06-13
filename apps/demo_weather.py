@@ -53,15 +53,22 @@ def main() -> None:
     print(f"fetching {len(cells)} cells for {args.city} {args.date} (res {res}) ...")
     frame = reg.get("weather.t2m", cells, day, day)  # 24 hourly rows per cell
 
-    gmin, gmax = float(frame["value"].min()), float(frame["value"].max())
     hours = frame.select(pl.col("time").unique().sort()).to_series().to_list()
-    frames = [
-        {"label": h.strftime("%H:%M"), "records": h3_layer_records(frame, at=h, vmin=gmin, vmax=gmax)}
-        for h in hours
-    ]
+    # heating degrees (a demand proxy) as a second selectable layer
+    hdd = frame.with_columns(pl.max_horizontal(18.0 - pl.col("value"), 0.0).alias("value"))
+
+    def _frames(f: pl.DataFrame) -> list[dict]:
+        vmin, vmax = float(f["value"].min()), float(f["value"].max())
+        return [
+            {"label": h.strftime("%H:%M"), "records": h3_layer_records(f, at=h, vmin=vmin, vmax=vmax)}
+            for h in hours
+        ]
 
     edge_m = h3.average_hexagon_edge_length(res, unit="m")
-    layers = [{"name": "2m temperature", "unit": "°C", "frames": frames}]
+    layers = [
+        {"name": "2m temperature", "unit": "°C", "frames": _frames(frame)},
+        {"name": "heating degrees", "unit": "°C", "frames": _frames(hdd)},
+    ]
     html = to_self_contained_html(
         layers,
         lat=p["lat"],
@@ -76,8 +83,8 @@ def main() -> None:
     out = f"{args.city}_3d.html"
     with open(out, "w") as f:
         f.write(html)
-    n = len(cells) * len(frames)
-    print(f"wrote {out} — {len(cells)} hexes × {len(frames)} h = {n:,} temperature values")
+    n = len(cells) * len(hours)
+    print(f"wrote {out} — {len(cells)} hexes × {len(hours)} h × {len(layers)} layers = {n:,} values")
 
 
 if __name__ == "__main__":
