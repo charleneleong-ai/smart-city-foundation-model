@@ -9,13 +9,12 @@ Run: uv run --extra forecast --extra tsfm python apps/eval_uk_demand.py
 from datetime import datetime, timezone
 from typing import Annotated
 
-import polars as pl
 import typer
 
 from sctwin.adapters.cache import CachingAdapter
+from sctwin.adapters.demand import LondonSmartMeterAdapter
 from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
-from sctwin.demand import LONDON_SMART_METERS_URL, london_smart_meters_to_long
 from sctwin.forecast.baselines import GBMForecaster
 from sctwin.forecast.chronos import ChronosForecaster
 from sctwin.forecast.features import FEATURE_COLS, build_supervised
@@ -35,8 +34,7 @@ def main(
     s = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
     e = datetime.fromisoformat(end).replace(tzinfo=timezone.utc)
     cells = cells_in_bbox(51.40, -0.25, 51.60, 0.05, res)[:meters]
-    raw = pl.scan_parquet(LONDON_SMART_METERS_URL).head(meters).collect()
-    demand = london_smart_meters_to_long(raw, cells, start=s, end=e)
+    demand = LondonSmartMeterAdapter().fetch(cells, s, e)
     weather = CachingAdapter(OpenMeteoWeatherAdapter(), ".cache/open-meteo").fetch(cells, s, e)
     sup = build_supervised(demand, weather)
     print(f"\nreal London load + weather — {len(cells)} households, {s.date()}..{e.date()}, rows={sup.height}")
