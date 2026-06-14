@@ -1,6 +1,6 @@
 import pytest
 
-from sctwin.app.cells import cells_in_bbox
+from sctwin.app.cells import cells_in_bbox, global_cells
 from sctwin.geo import center_of
 
 BOX = dict(south=51.50, west=-0.13, north=51.52, east=-0.10)
@@ -22,3 +22,10 @@ def test_finer_resolution_returns_more_cells():
 def test_invalid_resolution_rejected():
     with pytest.raises(ValueError):
         cells_in_bbox(**BOX, res=99)
+
+
+def test_global_cells_tile_the_whole_planet():
+    # the 122 base cells have 7^res children each (minus the 12 pentagons' missing child)
+    assert len(global_cells(0)) == 122
+    assert len(global_cells(2)) == 5882  # what a bbox polygon can't produce for the whole globe
+    assert len(global_cells(3)) > len(global_cells(2))

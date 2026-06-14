@@ -16,7 +16,7 @@ import polars as pl
 from sctwin.adapters.base import LayerAdapter
 from sctwin.adapters.cache import CachingAdapter
 from sctwin.adapters.open_meteo import OpenMeteoForecastAdapter, OpenMeteoWeatherAdapter
-from sctwin.app.cells import cells_in_bbox
+from sctwin.app.cells import cells_in_bbox, global_cells
 from sctwin.app.render import _ramp, h3_layer_records
 from sctwin.demand import ev_charging_load
 from sctwin.forecast.baselines import GBMForecaster
@@ -44,7 +44,7 @@ def _source() -> LayerAdapter:
 
 
 def _max_cells() -> int:
-    return 4000 if os.environ.get("WEATHER_SOURCE") == "era5" else MAX_CELLS  # ERA5 = one grid request
+    return 8000 if os.environ.get("WEATHER_SOURCE") == "era5" else MAX_CELLS  # ERA5 = one grid request
 
 # output field -> (display name, unit, range mode): zero=[0,max]; sym=[-M,M]; auto
 _ENERGY_LAYERS = [
@@ -72,7 +72,7 @@ _FORECAST_FEATURES = ["hour", "dow", "month", "y_lag_1", "y_lag_24"]
 
 def _resolve(preset: dict, radius: float | None, res: int | None) -> tuple[list, float, int]:
     south, west, north, east, zoom, r = bbox_and_zoom(preset, radius, res)
-    cells = cells_in_bbox(south, west, north, east, r)
+    cells = global_cells(r) if preset.get("global") else cells_in_bbox(south, west, north, east, r)
     cap = _max_cells()
     if not 0 < len(cells) <= cap:
         raise SystemExit(f"{len(cells)} cells — keep 1..{cap}; adjust --radius/--res")

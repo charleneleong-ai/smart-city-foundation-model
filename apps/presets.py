@@ -25,6 +25,10 @@ PRESETS: dict[str, dict] = {
     # region: British Isles incl. Ireland (res 4 ~ 541 cells; res 5 ~ 3800, gridded only)
     "isles": {"south": 49.8, "west": -11.0, "north": 59.0, "east": 2.0,
               "res": 4, "lat": 54.0, "lon": -4.5, "zoom": 4.7, "pitch": 45.0},
+    # whole planet — coarse global proxy preview (res 2 ~ 5.9k cells, all of Earth; res 4+ ~85k
+    # land cells needs map tiling). `global` -> enumerate every H3 cell, not a (degenerate) bbox.
+    "world": {"south": -85.0, "west": -180.0, "north": 85.0, "east": 180.0, "global": True,
+              "res": 2, "lat": 15.0, "lon": 0.0, "zoom": 1.3, "pitch": 30.0},
 }
 
 
