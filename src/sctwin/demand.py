@@ -28,15 +28,28 @@ LONDON_SMART_METERS_URL = (
 AEMO_URL = "https://aemo.com.au/aemo/data/nem/priceanddemand/PRICE_AND_DEMAND_{ym}_{region}.csv"
 
 
-def ev_charging_load(weather: pl.DataFrame, res: int, *, seed: int = 1) -> pl.DataFrame:
-    """EV-charging demand (kW) per (cell, time) derived from 2 m temperature: an evening-peaked
-    charging profile (people plug in after the commute), amplified in the cold (more driving +
-    earlier returns + battery/heater draw), scaled by a per-cell fleet-size proxy. Canonical
-    (cell, time, layer, value); non-negative."""
-    cells = weather["cell"].unique().to_list()
+def _fleet(cells: list[str], res: int, population: dict[str, float] | None) -> dict[str, float]:
+    """Per-cell EV-fleet scale. With GHSL population (geo_features.population_by_cell), fleet ∝
+    the people actually in the cell; otherwise a synthetic west→east longitude gradient."""
+    if population:
+        pops = {c: population.get(c, 0.0) for c in cells}
+        mean = (sum(pops.values()) / len(pops)) or 1.0
+        return {c: 0.5 + 7.0 * (pops[c] / mean) for c in cells}  # fleet ~ population
     lon = {c: center_of(Cell(c, res))[1] for c in cells}
     lo, hi = min(lon.values()), max(lon.values())
-    fleet = {c: 0.5 + 7.0 * ((lon[c] - lo) / ((hi - lo) or 1.0)) for c in cells}  # local EV fleet proxy
+    return {c: 0.5 + 7.0 * ((lon[c] - lo) / ((hi - lo) or 1.0)) for c in cells}
+
+
+def ev_charging_load(
+    weather: pl.DataFrame, res: int, *, population: dict[str, float] | None = None, seed: int = 1
+) -> pl.DataFrame:
+    """EV-charging demand (kW) per (cell, time) derived from 2 m temperature: an evening-peaked
+    charging profile (people plug in after the commute), amplified in the cold (more driving +
+    earlier returns + battery/heater draw), scaled by a per-cell fleet size. With `population`
+    (real GHSL counts) the scale is the people in the cell; else a synthetic gradient. Canonical
+    (cell, time, layer, value); non-negative."""
+    cells = weather["cell"].unique().to_list()
+    fleet = _fleet(cells, res, population)
     rng = np.random.default_rng(seed)
     rows = weather.select("cell", "time", "value").to_dict(as_series=False)  # value = 2 m temp (°C)
     kw = [
