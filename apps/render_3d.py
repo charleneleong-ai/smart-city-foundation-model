@@ -32,8 +32,10 @@ _TEMPLATE = """<!DOCTYPE html>
     font: 13px/1.45 -apple-system, system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.45); }
   #panel h1 { font-size: 15px; margin: 0 0 2px; }
   #panel .sub { opacity: .72; font-size: 12px; }
+  #yearwrap { margin: 11px 0 0; }
   #mapwrap { margin: 11px 0 0; display: __MAP_DISPLAY__; }
   #layerwrap { margin: 8px 0 2px; }
+  .srow { display: flex; gap: 6px; }
   #panel label { display: block; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
     opacity: .55; margin: 0 0 3px; }
   select { width: 100%; padding: 5px; color: #e8eaf2; background: rgba(255,255,255,.07);
@@ -47,7 +49,6 @@ _TEMPLATE = """<!DOCTYPE html>
   #time, #radius { flex: 1; accent-color: #ff5a3c; }
   #tlabel, #rlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 92px; font-size: 11px; }
   #btns { display: flex; gap: 8px; margin-top: 3px; }
-  #lrow { display: flex; gap: 6px; }
   .btn, .mini { padding: 6px; cursor: pointer; color: #e8eaf2;
     background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16); border-radius: 7px;
     font: 12px system-ui; }
@@ -62,9 +63,14 @@ _TEMPLATE = """<!DOCTYPE html>
 <div id="panel">
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
-  <div id="mapwrap"><label>__MAP_LABEL__</label><select id="mapsel">__MAP_OPTIONS__</select></div>
+  <div id="yearwrap" style="display: __YEAR_DISPLAY__"><label>__YEAR_LABEL__</label>
+    <div class="srow"><button id="yprev" class="mini">&#9664;</button><select id="yearsel">__YEAR_OPTIONS__</select><button id="ynext" class="mini">&#9654;</button></div>
+  </div>
+  <div id="mapwrap"><label>__MAP_LABEL__</label>
+    <div class="srow"><button id="mprev" class="mini">&#9664;</button><select id="mapsel">__MAP_OPTIONS__</select><button id="mnext" class="mini">&#9654;</button></div>
+  </div>
   <div id="layerwrap"><label>Layer</label>
-    <div id="lrow"><button id="lprev" class="mini">&#9664;</button><select id="layer"></select><button id="lnext" class="mini">&#9654;</button></div>
+    <div class="srow"><button id="lprev" class="mini">&#9664;</button><select id="layer"></select><button id="lnext" class="mini">&#9654;</button></div>
   </div>
   <div id="bar"></div>
   <div id="scale"><span id="vmin"></span><span id="vmax"></span></div>
@@ -76,12 +82,15 @@ _TEMPLATE = """<!DOCTYPE html>
       <button id="play" class="btn">&#9654; Play</button>
       <button id="toggle" class="btn">2D / 3D</button>
     </div>
-    <div id="hint">Click a hex to move the radius centre &#8853; · [ ] switch layer · &#8592; &#8594; step time</div>
+    <div id="hint">Click a hex to move the radius centre &#8853; · [ ] layer · , . month · - = year · &#8592; &#8594; time</div>
   </div>
 </div>
 <script>
   const MAPS = __MAPS__;  // [{name, subtitle, lat, lon, zoom, pitch, elev, cells, layers}]
   const DATA_DIR = "__DATA_DIR__";  // '' = fully inline; else fetch DATA_DIR/<i>.json on first select (lazy)
+  const STRIDE = __STRIDE__;  // maps per outer axis (months per year); MAPS is year-major flat
+  const NYEARS = MAPS.length / STRIDE;
+  const monthOf = i => i % STRIDE, yearOf = i => Math.floor(i / STRIDE);
   let mapIdx = 0, layerIdx = 0, frame = 0, extruded = true;
   const map = new maplibregl.Map({
     container: 'map',
@@ -158,6 +167,8 @@ _TEMPLATE = """<!DOCTYPE html>
     }
     map.jumpTo({ center: [m.lon, m.lat], zoom: m.zoom, pitch: m.pitch });
     document.getElementById('subtitle').textContent = m.subtitle;
+    document.getElementById('mapsel').value = monthOf(i);  // keep both selectors in sync with the flat index
+    const ys = document.getElementById('yearsel'); if (ys) ys.value = yearOf(i);
     const groups = {};
     m.layers.forEach((L, j) => { (groups[L.group || ''] ||= []).push(`<option value="${j}">${L.name}</option>`); });
     document.getElementById('layer').innerHTML = Object.entries(groups)
@@ -177,7 +188,17 @@ _TEMPLATE = """<!DOCTYPE html>
     const n = M().layers[layerIdx].frames.length; setFrame((frame + d + n) % n);
   }
 
-  document.getElementById('mapsel').addEventListener('change', e => selectMap(+e.target.value));
+  function stepMonth(d) { selectMap(yearOf(mapIdx) * STRIDE + (monthOf(mapIdx) + d + STRIDE) % STRIDE); }
+  function stepYear(d) { selectMap(((yearOf(mapIdx) + d + NYEARS) % NYEARS) * STRIDE + monthOf(mapIdx)); }
+  document.getElementById('mapsel').addEventListener('change', e => selectMap(yearOf(mapIdx) * STRIDE + (+e.target.value)));
+  document.getElementById('mprev').addEventListener('click', () => stepMonth(-1));
+  document.getElementById('mnext').addEventListener('click', () => stepMonth(1));
+  const yearsel = document.getElementById('yearsel');
+  if (yearsel) {
+    yearsel.addEventListener('change', e => selectMap((+e.target.value) * STRIDE + monthOf(mapIdx)));
+    document.getElementById('yprev').addEventListener('click', () => stepYear(-1));
+    document.getElementById('ynext').addEventListener('click', () => stepYear(1));
+  }
   document.getElementById('layer').addEventListener('change', e => selectLayer(+e.target.value));
   document.getElementById('lprev').addEventListener('click', () => selectLayer(layerIdx - 1));
   document.getElementById('lnext').addEventListener('click', () => selectLayer(layerIdx + 1));
@@ -185,6 +206,10 @@ _TEMPLATE = """<!DOCTYPE html>
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;  // don't double-handle
     if (e.key === '[') selectLayer(layerIdx - 1);
     else if (e.key === ']') selectLayer(layerIdx + 1);
+    else if (e.key === ',') stepMonth(-1);
+    else if (e.key === '.') stepMonth(1);
+    else if (e.key === '-' && yearsel) stepYear(-1);
+    else if (e.key === '=' && yearsel) stepYear(1);
     else if (e.key === 'ArrowLeft') stepTime(-1);
     else if (e.key === 'ArrowRight') stepTime(1);
   });
@@ -240,12 +265,22 @@ def _js_map(m: dict) -> dict:
 _META_KEYS = ("name", "subtitle", "lat", "lon", "zoom", "pitch", "elev")
 
 
-def _fill(maps_json: list[dict], *, title: str, about: str, bearing: float, map_label: str, data_dir: str) -> str:
-    options = "".join(f'<option value="{i}">{m["name"]}</option>' for i, m in enumerate(maps_json))
+def _fill(
+    maps_json: list[dict], *, title: str, about: str, bearing: float, map_label: str, data_dir: str,
+    group_label: str, group_options: list[str] | None, stride: int | None,
+) -> str:
+    stride = stride or len(maps_json)  # maps per outer (year) group; default = single group
+    years = group_options or []
+    month_opts = "".join(f'<option value="{i}">{m["name"]}</option>' for i, m in enumerate(maps_json[:stride]))
+    year_opts = "".join(f'<option value="{i}">{y}</option>' for i, y in enumerate(years))
     repl = {  # repr() on floats -> valid JS number literals; json.dumps for arrays
         "__MAPS__": json.dumps(maps_json),
-        "__MAP_OPTIONS__": options,
+        "__MAP_OPTIONS__": month_opts,
         "__MAP_LABEL__": map_label,
+        "__YEAR_OPTIONS__": year_opts,
+        "__YEAR_LABEL__": group_label,
+        "__YEAR_DISPLAY__": "block" if len(years) > 1 else "none",
+        "__STRIDE__": str(stride),
         "__BEARING__": repr(bearing),
         "__MAP_DISPLAY__": "block" if len(maps_json) > 1 else "none",
         "__TITLE__": title,
@@ -259,22 +294,25 @@ def _fill(maps_json: list[dict], *, title: str, about: str, bearing: float, map_
 
 
 def to_self_contained_html(
-    maps: list[dict], *, title: str = "sctwin", about: str = "", bearing: float = 18.0, map_label: str = "Domain"
+    maps: list[dict], *, title: str = "sctwin", about: str = "", bearing: float = 18.0, map_label: str = "Domain",
+    group_label: str = "Year", group_options: list[str] | None = None, stride: int | None = None,
 ) -> str:
     """Render named maps as a self-contained 3D viewer with map/layer/time selectors.
 
     maps: [{"name", "subtitle", "lat", "lon", "zoom", "pitch", "elevation_scale",
             "layers": [{"name", "unit", "frames": [{"label", "records": [...]}]}]}].
     Each map is self-contained (own geometry + centre); switching maps recentres the view.
-    `map_label` titles the map selector (e.g. "Month" when each map is a sampled month).
+    `map_label` titles the inner selector (e.g. "Month"). For a 2-axis grid, pass `stride`
+    (inner maps per outer group, year-major) and `group_options` (e.g. the year labels).
     """
-    return _fill([_js_map(m) for m in maps], title=title, about=about, bearing=bearing,
-                 map_label=map_label, data_dir="")
+    return _fill([_js_map(m) for m in maps], title=title, about=about, bearing=bearing, map_label=map_label,
+                 data_dir="", group_label=group_label, group_options=group_options, stride=stride)
 
 
 def to_lazy_html(
     maps: list[dict], *, data_dir: str, title: str = "sctwin", about: str = "", bearing: float = 18.0,
-    map_label: str = "Domain",
+    map_label: str = "Domain", group_label: str = "Year", group_options: list[str] | None = None,
+    stride: int | None = None,
 ) -> tuple[str, list[dict]]:
     """Like `to_self_contained_html` but embeds only per-map metadata; each map's heavy
     cells+layers payload is returned separately to be written as `<data_dir>/<i>.json` and
@@ -283,5 +321,6 @@ def to_lazy_html(
     must be served over http (fetch can't read file://). Returns (html, payloads)."""
     payloads = [_js_map(m) for m in maps]
     meta = [{k: p[k] for k in _META_KEYS} for p in payloads]
-    html = _fill(meta, title=title, about=about, bearing=bearing, map_label=map_label, data_dir=data_dir)
+    html = _fill(meta, title=title, about=about, bearing=bearing, map_label=map_label, data_dir=data_dir,
+                 group_label=group_label, group_options=group_options, stride=stride)
     return html, payloads
