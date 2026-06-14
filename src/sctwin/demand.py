@@ -103,6 +103,7 @@ def london_smart_meters_to_long(
             .dt.cast_time_unit("us").alias("time"),  # match the weather adapter's us precision for joins
             pl.col("target").alias("value"),
         )
+        .filter(pl.col("value").is_finite())  # LCL meters have missing readings (NaN) — drop them
         .group_by("_id", "time")
         .agg(pl.col("value").mean())
         .join(mapping, on="_id")
