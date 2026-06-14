@@ -17,6 +17,7 @@ dev = ["pytest>=8.0", "respx>=0.21", "ruff>=0.5", "mypy>=1.10", "fastapi[testcli
 forecast = ["scikit-learn>=1.4"]
 app = ["fastapi>=0.115", "uvicorn>=0.32"]
 gridded = ["ecmwf-datastores-client>=0.4", "xarray>=2024.1", "netcdf4>=1.6"]
+tsfm = ["chronos-forecasting>=1.5", "pandas>=2.0", "pyarrow>=16.0"]  # Chronos-2 time-series FM
 
 [build-system]
 requires = ["hatchling"]
