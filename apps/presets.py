@@ -14,6 +14,11 @@ PRESETS: dict[str, dict] = {
             "res": 8, "lat": 40.72, "lon": -73.95, "zoom": 10.4, "pitch": 50.0},
     "tokyo": {"south": 35.63, "west": 139.66, "north": 35.74, "east": 139.84,
               "res": 8, "lat": 35.685, "lon": 139.75, "zoom": 10.4, "pitch": 50.0},
+    "sydney": {"south": -33.95, "west": 151.10, "north": -33.80, "east": 151.30,
+               "res": 8, "lat": -33.87, "lon": 151.21, "zoom": 10.4, "pitch": 50.0},
+    # region: south-east Australia (NEM mainland) res 4
+    "australia": {"south": -38.5, "west": 140.5, "north": -27.5, "east": 154.0,
+                  "res": 4, "lat": -33.5, "lon": 147.0, "zoom": 4.5, "pitch": 45.0},
     # region: Great Britain, north-south gradient (res 4 ~ 312 cells)
     "uk": {"south": 50.0, "west": -6.0, "north": 58.7, "east": 1.8,
            "res": 4, "lat": 54.5, "lon": -2.6, "zoom": 4.9, "pitch": 45.0},
