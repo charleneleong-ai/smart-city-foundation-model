@@ -1,8 +1,9 @@
 """Derived demand channels — the physical-AI-facing predictions an embodied fleet acts on
 (charging operators, depot planners, grid controllers plan against demand, not weather).
 
-Also the loader for *real* demand: Monash electricity_hourly (321 real meters, hourly), so the
-GBM-vs-Chronos comparison runs on genuine load instead of a synthetic sinusoid.
+Also the loaders for *real* demand: Monash electricity_hourly (321 meters) and Low Carbon
+London smart-meter households (overlaid with real London weather), so the GBM-vs-Chronos
+comparison runs on genuine load instead of a synthetic sinusoid.
 """
 
 import math
@@ -17,6 +18,11 @@ from sctwin.geo import Cell, center_of
 ELECTRICITY_URL = (
     "https://huggingface.co/datasets/autogluon/chronos_datasets/resolve/main/"
     "monash_electricity_hourly/train-00000-of-00001.parquet"
+)
+# Low Carbon London smart-meter households (real UK load, half-hourly, 2012-2014) via Chronos datasets
+LONDON_SMART_METERS_URL = (
+    "https://huggingface.co/datasets/autogluon/chronos_datasets/resolve/main/"
+    "monash_london_smart_meters/train-00000-of-00003.parquet"
 )
 
 
@@ -52,6 +58,31 @@ def electricity_to_long(raw: pl.DataFrame, *, start: datetime, end: datetime, n_
         raw.head(n_meters)
         .explode(["timestamp", "target"])
         .rename({"id": "cell", "timestamp": "time", "target": "value"})
+        .filter((pl.col("time") >= start) & (pl.col("time") <= end))
+    )
+    return long.with_columns(pl.lit("load").alias("layer")).select("cell", "time", "layer", "value")
+
+
+def london_smart_meters_to_long(
+    raw: pl.DataFrame, cells: list[Cell], *, start: datetime, end: datetime
+) -> pl.DataFrame:
+    """Real London household load (id, timestamp[], target[]) → hourly canonical (cell, time,
+    layer, value). Each meter is assigned a distinct London `cell` so it pairs with that cell's
+    weather; the half-hourly readings are averaged to the hour (UTC). Windowed to [start, end]."""
+    ids = raw["id"].to_list()[: len(cells)]
+    mapping = pl.DataFrame({"_id": ids, "cell": [c.h3 for c in cells[: len(ids)]]})
+    long = (
+        raw.head(len(cells))
+        .explode(["timestamp", "target"])
+        .select(
+            pl.col("id").alias("_id"),
+            pl.col("timestamp").dt.truncate("1h").dt.replace_time_zone("UTC")
+            .dt.cast_time_unit("us").alias("time"),  # match the weather adapter's us precision for joins
+            pl.col("target").alias("value"),
+        )
+        .group_by("_id", "time")
+        .agg(pl.col("value").mean())
+        .join(mapping, on="_id")
         .filter((pl.col("time") >= start) & (pl.col("time") <= end))
     )
     return long.with_columns(pl.lit("load").alias("layer")).select("cell", "time", "layer", "value")
