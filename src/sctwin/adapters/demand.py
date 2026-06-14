@@ -10,8 +10,10 @@ EIA (US balancing authorities), ENTSO-E (EU bidding zones), NESO (GB), AEMO (AU)
 """
 
 import io
+import os
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 import polars as pl
@@ -19,13 +21,18 @@ import polars as pl
 from sctwin.adapters.base import LayerAdapter
 from sctwin.demand import (
     AEMO_URL,
+    ELECTRICITY_MAPS_URL,
     ELECTRICITY_URL,
     LONDON_SMART_METERS_URL,
     aemo_to_long,
+    el_maps_to_long,
     electricity_to_long,
     london_smart_meters_to_long,
 )
-from sctwin.geo import Cell
+from sctwin.geo import Cell, center_of
+
+_FAR_PAST = datetime(1970, 1, 1, tzinfo=timezone.utc)  # accumulate every fetched row into the cache
+_FAR_FUTURE = datetime(2100, 1, 1, tzinfo=timezone.utc)
 
 
 def _months(start: datetime, end: datetime) -> list[str]:
@@ -98,10 +105,42 @@ class AEMODemandAdapter:
         return aemo_to_long(raw, cell=cells[0].h3, start=start, end=end)  # one regional series -> one cell
 
 
+class ElectricityMapsAdapter:
+    """Real total load (MW) from Electricity Maps — ~200 zones globally, by zone code or the
+    cell's lat/lon (geolocation). The free endpoint returns only the last 24 h, so fetch()
+    *accumulates*: each pull is merged (deduped by timestamp) into a per-zone parquet cache, so
+    repeated polling builds a growing real series. Needs ELECTRICITYMAPS_TOKEN in the env."""
+
+    name = "demand.load"
+
+    def __init__(
+        self, zone: str = "GB", *, token: str | None = None, cache_dir: str = ".cache/electricitymaps"
+    ) -> None:
+        self._zone, self._cache = zone, Path(cache_dir)
+        self._token = token or os.environ.get("ELECTRICITYMAPS_TOKEN", "")
+
+    def _read(self, cell: Cell) -> list[dict]:
+        lat, lon = center_of(cell)
+        params = {"zone": self._zone} if self._zone else {"lat": f"{lat:.4f}", "lon": f"{lon:.4f}"}
+        resp = httpx.get(ELECTRICITY_MAPS_URL, params=params, headers={"auth-token": self._token}, timeout=60.0)
+        resp.raise_for_status()
+        return resp.json().get("history", [])
+
+    def fetch(self, cells: list[Cell], start: datetime, end: datetime) -> pl.DataFrame:
+        fresh = el_maps_to_long(self._read(cells[0]), cell=cells[0].h3, start=_FAR_PAST, end=_FAR_FUTURE)
+        path = self._cache / f"{self._zone or cells[0].h3}.parquet"
+        prior = pl.read_parquet(path) if path.exists() else fresh.clear()
+        merged = pl.concat([prior, fresh]).unique(subset=["time"], keep="last").sort("time")  # accumulate
+        self._cache.mkdir(parents=True, exist_ok=True)
+        merged.write_parquet(path)
+        return merged.filter((pl.col("time") >= start) & (pl.col("time") <= end))
+
+
 _ADAPTERS: dict[str, Callable[[], LayerAdapter]] = {
     "london": LondonSmartMeterAdapter,
     "electricity": ElectricityMeterAdapter,
     "aemo": AEMODemandAdapter,
+    "electricitymaps": ElectricityMapsAdapter,
 }
 
 
