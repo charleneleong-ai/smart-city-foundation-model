@@ -18,6 +18,7 @@ from sctwin.adapters.cache import CachingAdapter
 from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.app.render import _ramp, h3_layer_records
+from sctwin.demand import ev_charging_load
 from sctwin.forecast.baselines import GBMForecaster
 from sctwin.forecast.features import FEATURE_COLS, build_supervised
 from sctwin.geo import Cell, center_of
@@ -53,6 +54,12 @@ _WEATHER_FC_LAYERS = [
     ("y_true", "actual", "°C", "auto"),
     ("y_pred", "forecast", "°C", "auto"),
     ("abs_error", "|error|", "°C", "zero"),
+    ("covered", "covered", "in/out", "auto"),
+]
+_EV_LAYERS = [  # the physical-AI consumable: where/when charging demand lands, + forecast & coverage
+    ("y_true", "demand", "kW", "zero"),
+    ("y_pred", "forecast", "kW", "zero"),
+    ("abs_error", "|error|", "kW", "zero"),
     ("covered", "covered", "in/out", "auto"),
 ]
 # forecast a future value from calendar + its own lags only (no concurrent / circular features)
@@ -187,12 +194,19 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
     eres = verification_frame(GBMForecaster(), build_supervised(_synth_load(wx, r), wx), FEATURE_COLS, alpha=0.1)
     energy_out = _verify_layers(eres, _ENERGY_LAYERS, "Energy forecast")
 
+    # Output 3: EV-charging demand surface — the physical-AI consumable (fleet routing, depot siting)
+    evres = verification_frame(GBMForecaster(), build_supervised(ev_charging_load(wx, r), wx), FEATURE_COLS, alpha=0.1)
+    ev_out = _verify_layers(evres, _EV_LAYERS, "EV charging")
+
     w_mae, e_mae = float(wres["abs_error"].mean()), float(eres["abs_error"].mean())
     return {
         "name": name,
         "subtitle": f"{start} · forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f}",
         **_view(preset, zoom, r),
-        "layers": [wlayer("temperature", day1), wlayer("heating degrees", hdd), *weather_out, *energy_out],
+        "layers": [
+            wlayer("temperature", day1), wlayer("heating degrees", hdd),
+            *weather_out, *energy_out, *ev_out,
+        ],
     }
 
 

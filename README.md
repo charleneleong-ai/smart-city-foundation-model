@@ -1,17 +1,20 @@
 # Smart City Foundation Model — Urban Digital Twin
 
 A **verifiable urban digital twin** built from open data and open foundation models
-(LLMs, VLMs / geospatial FMs, world models, RLVR) for smart-city planning predictions
-— energy first.
+(time-series FMs, geospatial FMs, world models, RLVR) — the **calibrated predictive
+world-model that Physical (Embodied) AI plans against**. Robots, drones, AVs and smart
+infrastructure don't act on weather; they act on *where and when demand, load, and risk will
+be* — predicted per H3 cell, at macro and micro scale, with the uncertainty needed to act safely.
 
-- **Modular, not monolithic** — a foundation model per concern, each independently
-  verifiable.
-- **Verification is a first-class spine** — RLVR rewards, backtesting, conformal
-  calibration, and drift-triggered re-grounding against real measurements.
-- **Portable** — instantiable for any city from global open layers; region data is a
-  pluggable adapter.
+- **Multi-domain, one substrate** — weather, energy, **EV charging**, … are channels of one
+  forecaster ([Chronos-2](https://hf.co/amazon/chronos-2)); weather conditions energy via covariates.
+- **Verification is a first-class spine** — RLVR rewards, backtesting, conformal calibration, and
+  drift-triggered re-grounding, so an embodied agent knows *when not to trust* a prediction.
+- **Portable, macro + micro** — any city from global open layers; H3 res 4 (region) to res 8
+  (neighbourhood / charging cluster).
 
-See the design: [`docs/specs/2026-06-12-urban-digital-twin-design.md`](docs/specs/2026-06-12-urban-digital-twin-design.md).
+See: [`docs/physical-ai-world-model.md`](docs/physical-ai-world-model.md) ·
+[design spec](docs/specs/2026-06-12-urban-digital-twin-design.md).
 
 ## Quickstart
 
@@ -35,7 +38,9 @@ open uk_twin_3d.html
 
 - **Weather domain:** 2 m temperature, heating degrees.
 - **Energy domain:** demand (`y_true`), forecast (`y_pred`), |error|, delta (diverging), coverage —
-  from the SP4 GBM + SP5 split-conformal harness; subtitle reports MAE / RMSE / coverage.
+  from the SP4 GBM + SP5 split-conformal harness.
+- **EV charging (physical-AI consumable):** evening-peaked, cold-amplified charging-demand surface
+  ([`sctwin.demand`](src/sctwin/demand.py)) → forecast + interval a fleet/depot operator acts on.
 
 Weather-only map: `mise run map` (`apps/demo_weather.py`). Presets: `london`, `nyc`, `tokyo`
 (city, H3 res 8), `uk` (region, res 4). `--radius <km>` + `--res <0..15>` control extent/detail
