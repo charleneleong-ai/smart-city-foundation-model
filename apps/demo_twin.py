@@ -6,11 +6,13 @@ the Layer dropdown picks a field, the radius slider filters, Play steps through 
 --months none for a single --date build.)
 """
 
-import argparse
 import calendar
 import json
 import os
 from pathlib import Path
+from typing import Annotated
+
+import typer
 
 from presets import PRESETS
 from render_3d import to_lazy_html, to_self_contained_html
@@ -46,51 +48,50 @@ _ABOUT = (
 )
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Render the city digital twin (multi-domain 3D map).")
-    ap.add_argument("--city", default="uk", choices=sorted(PRESETS))
-    ap.add_argument("--date", default="2020-01-01")
-    ap.add_argument("--months", default="all",
-                    help="months sampled into the Month picker: 'all' (default), e.g. '1,4,7,10', or 'none' "
-                         "for a single --date build (year from --date)")
-    ap.add_argument("--day", type=int, default=1, help="day-of-month to sample (clamped per month)")
-    ap.add_argument("--years", default=None,
-                    help="sample across years into a Year picker: e.g. '2018,2019,2020' or '2018-2020' "
-                         "(default: the year in --date)")
-    ap.add_argument("--days", type=int, default=5, help="days of history for the energy forecast")
-    ap.add_argument("--radius", type=float, default=None, help="km around the preset centre")
-    ap.add_argument("--res", type=int, default=None, help="H3 resolution override")
-    ap.add_argument("--source", default="open-meteo", choices=["open-meteo", "era5"],
-                    help="weather source — era5 is gridded (dense, no rate limit; needs CDS key)")
-    ap.add_argument("--inline", action="store_true",
-                    help="force one self-contained file (no lazy month fetch); default lazy-loads months over http")
-    args = ap.parse_args()
-    if args.source == "era5":
+def main(
+    city: Annotated[str, typer.Option(help="preset region")] = "uk",
+    date: Annotated[str, typer.Option(help="YYYY-MM-DD (year used when --months/--years set)")] = "2020-01-01",
+    months: Annotated[str, typer.Option(
+        help="Month picker: 'all', e.g. '1,4,7,10', or 'none' for a single --date build")] = "all",
+    day: Annotated[int, typer.Option(help="day-of-month to sample (clamped per month)")] = 1,
+    years: Annotated[str | None, typer.Option(
+        help="Year picker: e.g. '2018,2019,2020' or '2018-2020' (default: the year in --date)")] = None,
+    days: Annotated[int, typer.Option(help="days of history for the energy forecast")] = 5,
+    radius: Annotated[float | None, typer.Option(help="km around the preset centre")] = None,
+    res: Annotated[int | None, typer.Option(help="H3 resolution override")] = None,
+    source: Annotated[str, typer.Option(help="open-meteo, or era5 (gridded; needs CDS key)")] = "open-meteo",
+    inline: Annotated[bool, typer.Option(
+        help="force one self-contained file; default lazy-loads months over http")] = False,
+) -> None:
+    """Render the city digital twin (multi-domain, month/year-sampled 3D map)."""
+    if city not in PRESETS:
+        raise typer.BadParameter(f"--city must be one of {', '.join(sorted(PRESETS))}")
+    if source == "era5":
         os.environ["WEATHER_SOURCE"] = "era5"
 
-    p = PRESETS[args.city]
-    years = _years(args.date, args.years)
-    dates = _sample_dates(args.date, args.months, args.day, years)
+    p = PRESETS[city]
+    year_nums = _years(date, years)
+    dates = _sample_dates(date, months, day, year_nums)
     multi = len(dates) > 1
-    multiyear = multi and len(years) > 1
-    stride = len(dates) // len(years) if multi else 1  # months per year (year-major flat list)
+    multiyear = multi and len(year_nums) > 1
+    stride = len(dates) // len(year_nums) if multi else 1  # months per year (year-major flat list)
 
     def _name(d: str) -> str:
         if not multi:
-            return f"{args.city.upper()} twin"
+            return f"{city.upper()} twin"
         mon = calendar.month_abbr[int(d[5:7])]
         return mon if multiyear else f"{mon} {d[:4]}"  # year shown in its own picker when present
 
-    maps = [twin_map(_name(d), p, d, args.days, radius=args.radius, res=args.res) for d in dates]
+    maps = [twin_map(_name(d), p, d, days, radius=radius, res=res) for d in dates]
     unify_ranges(maps)  # absolute gradient: one colour/height scale per layer across all maps
-    title = f"{args.city.upper()} — city digital twin"
+    title = f"{city.upper()} — city digital twin"
     axes = {
         "map_label": "Month" if multi else "Domain",
-        "group_options": [str(y) for y in years] if multiyear else None,
+        "group_options": [str(y) for y in year_nums] if multiyear else None,
         "stride": stride,
     }
-    out = Path(f"{args.city}_twin_3d.html")
-    if multi and not args.inline:  # lazy: small shell + per-map JSON fetched on select (serve over http)
+    out = Path(f"{city}_twin_3d.html")
+    if multi and not inline:  # lazy: small shell + per-map JSON fetched on select (serve over http)
         data_dir = out.with_suffix(".data")
         html, payloads = to_lazy_html(maps, data_dir=data_dir.name, title=title, about=_ABOUT, **axes)
         data_dir.mkdir(exist_ok=True)
@@ -109,4 +110,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)
