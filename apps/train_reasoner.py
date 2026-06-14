@@ -33,11 +33,10 @@ from presets import PRESETS
 from twin import _synth_load
 
 
-def build_dataset(city: str, date: str, days: int, res: int):
-    """A (prompt, actual, lo, hi) row per held-out test cell-hour, built from the same
-    SP4 features + SP5 verification the twin uses. Returns (hf_dataset, environment)."""
-    from datasets import Dataset
-
+def build_samples(city: str, date: str, days: int, res: int) -> tuple[dict, ReasoningEnvironment]:
+    """{prompt, actual, lo, hi} columns per held-out test cell-hour, built from the same SP4
+    features + SP5 verification the twin uses, plus the environment. Pure CPU + no HF deps —
+    used by both training and baseline eval. Returns (columns, environment)."""
     p = PRESETS[city]
     cells = cells_in_bbox(p["south"], p["west"], p["north"], p["east"], res)
     start = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
@@ -49,7 +48,7 @@ def build_dataset(city: str, date: str, days: int, res: int):
     results = verification_frame(GBMForecaster(), supervised, FEATURE_COLS)
     rows = supervised.join(results.select("cell", "time", "y_true", "lo", "hi"), on=["cell", "time"]).to_dicts()
 
-    data = {
+    columns = {
         "prompt": [
             prompt_for(
                 f"cell {r['cell']}, hour {int(r['hour'])}, HDD {r['hdd']:.1f}, "
@@ -61,7 +60,15 @@ def build_dataset(city: str, date: str, days: int, res: int):
         "lo": [float(r["lo"]) for r in rows],
         "hi": [float(r["hi"]) for r in rows],
     }
-    return Dataset.from_dict(data), ReasoningEnvironment(results)
+    return columns, ReasoningEnvironment(results)
+
+
+def build_dataset(city: str, date: str, days: int, res: int):
+    """build_samples wrapped as a HuggingFace Dataset for TRL. Returns (hf_dataset, environment)."""
+    from datasets import Dataset
+
+    columns, env = build_samples(city, date, days, res)
+    return Dataset.from_dict(columns), env
 
 
 def main(

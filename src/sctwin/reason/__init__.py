@@ -1,3 +1,10 @@
+from sctwin.reason.baseline import (
+    constant,
+    evaluate,
+    interval_centre,
+    oracle,
+    reference_policies,
+)
 from sctwin.reason.environment import Policy, Question, ReasoningEnvironment
 from sctwin.reason.reward import (
     accuracy_reward,
@@ -14,4 +21,9 @@ __all__ = [
     "Question",
     "Policy",
     "ReasoningEnvironment",
+    "oracle",
+    "interval_centre",
+    "constant",
+    "reference_policies",
+    "evaluate",
 ]
