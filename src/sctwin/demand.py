@@ -24,6 +24,8 @@ LONDON_SMART_METERS_URL = (
     "https://huggingface.co/datasets/autogluon/chronos_datasets/resolve/main/"
     "monash_london_smart_meters/train-00000-of-00003.parquet"
 )
+# AEMO NEM regional demand (real AU load, MW) — public monthly CSV per region (NSW1, VIC1, ...)
+AEMO_URL = "https://aemo.com.au/aemo/data/nem/priceanddemand/PRICE_AND_DEMAND_{ym}_{region}.csv"
 
 
 def ev_charging_load(weather: pl.DataFrame, res: int, *, seed: int = 1) -> pl.DataFrame:
@@ -61,6 +63,27 @@ def electricity_to_long(raw: pl.DataFrame, *, start: datetime, end: datetime, n_
         .filter((pl.col("time") >= start) & (pl.col("time") <= end))
     )
     return long.with_columns(pl.lit("load").alias("layer")).select("cell", "time", "layer", "value")
+
+
+def aemo_to_long(raw: pl.DataFrame, *, cell: str, start: datetime, end: datetime) -> pl.DataFrame:
+    """AEMO price-and-demand CSV (REGION, SETTLEMENTDATE, TOTALDEMAND, …) → hourly canonical
+    (cell, time, layer, value=MW). SETTLEMENTDATE is AEST (UTC+10); converted to UTC and averaged
+    to the hour so it pairs with the (UTC) weather frame. Windowed to [start, end] on one cell —
+    AEMO demand is a single regional aggregate."""
+    return (
+        raw.select(
+            pl.col("SETTLEMENTDATE").str.to_datetime("%Y/%m/%d %H:%M:%S")
+            .dt.replace_time_zone("Etc/GMT-10").dt.convert_time_zone("UTC")  # AEST (UTC+10) -> UTC
+            .dt.truncate("1h").dt.cast_time_unit("us").alias("time"),
+            pl.col("TOTALDEMAND").alias("value"),
+        )
+        .group_by("time")
+        .agg(pl.col("value").mean())
+        .filter((pl.col("time") >= start) & (pl.col("time") <= end))
+        .with_columns(pl.lit(cell).alias("cell"), pl.lit("load").alias("layer"))
+        .select("cell", "time", "layer", "value")
+        .sort("time")
+    )
 
 
 def london_smart_meters_to_long(

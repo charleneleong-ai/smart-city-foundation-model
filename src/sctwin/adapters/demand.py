@@ -9,19 +9,32 @@ the Chronos datasets parquet. The same interface fits grid-operator APIs as drop
 EIA (US balancing authorities), ENTSO-E (EU bidding zones), NESO (GB), AEMO (AU).
 """
 
+import io
 from collections.abc import Callable
 from datetime import datetime
 
+import httpx
 import polars as pl
 
 from sctwin.adapters.base import LayerAdapter
 from sctwin.demand import (
+    AEMO_URL,
     ELECTRICITY_URL,
     LONDON_SMART_METERS_URL,
+    aemo_to_long,
     electricity_to_long,
     london_smart_meters_to_long,
 )
 from sctwin.geo import Cell
+
+
+def _months(start: datetime, end: datetime) -> list[str]:
+    """The YYYYMM tags spanning [start, end] inclusive (AEMO ships one CSV per month)."""
+    out, y, m = [], start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        out.append(f"{y}{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
 
 
 class LondonSmartMeterAdapter:
@@ -65,9 +78,30 @@ class ElectricityMeterAdapter:
         )
 
 
+class AEMODemandAdapter:
+    """Real Australian NEM regional demand (AEMO) — a single aggregate series per region (MW),
+    pinned to one cell (the region's city) so it pairs with that city's weather."""
+
+    name = "demand.load"
+
+    def __init__(self, region: str = "NSW1") -> None:
+        self._region = region
+
+    def _read(self, ym: str) -> pl.DataFrame:
+        url = AEMO_URL.format(ym=ym, region=self._region)
+        resp = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=60.0, follow_redirects=True)
+        resp.raise_for_status()  # AEMO's CDN 403s a bare request — needs the UA header
+        return pl.read_csv(io.BytesIO(resp.content))
+
+    def fetch(self, cells: list[Cell], start: datetime, end: datetime) -> pl.DataFrame:
+        raw = pl.concat([self._read(ym) for ym in _months(start, end)])
+        return aemo_to_long(raw, cell=cells[0].h3, start=start, end=end)  # one regional series -> one cell
+
+
 _ADAPTERS: dict[str, Callable[[], LayerAdapter]] = {
     "london": LondonSmartMeterAdapter,
     "electricity": ElectricityMeterAdapter,
+    "aemo": AEMODemandAdapter,
 }
 
 
