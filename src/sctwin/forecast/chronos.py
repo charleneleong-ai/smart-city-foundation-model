@@ -31,18 +31,24 @@ class ChronosForecaster:
     def __init__(self, *, model: str = "amazon/chronos-2", device: str = "cpu", pipeline: Any = None) -> None:
         self._model, self._device, self._pipeline = model, device, pipeline
 
+    def pipeline(self) -> Any:
+        """Lazily load (and cache) the Chronos-2 pipeline — exposed so a caller can load it once
+        and share it across many forecasters/`verify` calls (the model download is the slow bit)."""
+        if self._pipeline is None:
+            from chronos import Chronos2Pipeline
+
+            self._pipeline = Chronos2Pipeline.from_pretrained(self._model, device_map=self._device)
+        return self._pipeline
+
     def _forecast(
         self, history: pl.DataFrame, future: pl.DataFrame, horizon: int, target: str, covariates: list[str]
     ) -> pl.DataFrame:
         """Chronos-2 `predict_df` at the pandas boundary → (cell, time, y_pred, lo, hi). Isolated
         so tests can stub it without torch / chronos / pandas / a model download."""
-        if self._pipeline is None:
-            from chronos import Chronos2Pipeline
-
-            self._pipeline = Chronos2Pipeline.from_pretrained(self._model, device_map=self._device)
+        pipe = self.pipeline()
         ctx = history.select("cell", "time", target, *covariates).to_pandas()
         fut = future.select("cell", "time", *covariates).to_pandas()
-        pred = self._pipeline.predict_df(
+        pred = pipe.predict_df(
             ctx, future_df=fut, prediction_length=horizon, quantile_levels=list(_QUANTILES),
             id_column="cell", timestamp_column="time", target=target,
         )
