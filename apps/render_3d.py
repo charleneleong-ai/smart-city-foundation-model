@@ -45,7 +45,8 @@ _TEMPLATE = """<!DOCTYPE html>
   #scale { display: flex; justify-content: space-between; font-size: 11px; opacity: .82; }
   #about { font-size: 12px; opacity: .82; margin: 11px 0 0; }
   #controls { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 11px; }
-  #trow { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+  .ctl { margin-bottom: 9px; }
+  .trow { display: flex; align-items: center; gap: 9px; }
   #time, #radius { flex: 1; accent-color: #ff5a3c; }
   #tlabel, #rlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 92px; font-size: 11px; }
   #btns { display: flex; gap: 8px; margin-top: 3px; }
@@ -73,32 +74,36 @@ _TEMPLATE = """<!DOCTYPE html>
   <div class="kr"><span><kbd>[</kbd><kbd>]</kbd></span> layer</div>
   <div class="kr"><span><kbd>,</kbd><kbd>.</kbd></span> month</div>
   <div class="kr" style="display: __YEAR_DISPLAY__"><span><kbd>-</kbd><kbd>=</kbd></span> year</div>
-  <div class="kr"><span><kbd>&#8592;</kbd><kbd>&#8594;</kbd></span> time</div>
+  <div class="kr"><span><kbd>;</kbd><kbd>&#39;</kbd></span> time</div>
   <div class="kr"><span><kbd>click</kbd></span> move radius centre</div>
 </div>
 <div id="panel">
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
   <div id="yearwrap" style="display: __YEAR_DISPLAY__"><label>__YEAR_LABEL__</label>
-    <div class="srow"><button id="yprev" class="mini">&#9664;</button><select id="yearsel">__YEAR_OPTIONS__</select><button id="ynext" class="mini">&#9654;</button></div>
+    <div class="srow"><button id="yprev" class="mini">&#10094;</button><select id="yearsel">__YEAR_OPTIONS__</select><button id="ynext" class="mini">&#10095;</button></div>
   </div>
   <div id="mapwrap"><label>__MAP_LABEL__</label>
-    <div class="srow"><button id="mprev" class="mini">&#9664;</button><select id="mapsel">__MAP_OPTIONS__</select><button id="mnext" class="mini">&#9654;</button></div>
+    <div class="srow"><button id="mprev" class="mini">&#10094;</button><select id="mapsel">__MAP_OPTIONS__</select><button id="mnext" class="mini">&#10095;</button></div>
   </div>
   <div id="layerwrap"><label>Layer</label>
-    <div class="srow"><button id="lprev" class="mini">&#9664;</button><select id="layer"></select><button id="lnext" class="mini">&#9654;</button></div>
+    <div class="srow"><button id="lprev" class="mini">&#10094;</button><select id="layer"></select><button id="lnext" class="mini">&#10095;</button></div>
   </div>
   <div id="bar"></div>
   <div id="scale"><span id="vmin"></span><span id="vmax"></span></div>
-  <p id="about">__ABOUT__</p>
   <div id="controls">
-    <div id="trow"><input id="radius" type="range" min="1" step="1" /><span id="rlabel"></span></div>
-    <div id="trow"><input id="time" type="range" min="0" value="0" step="1" /><span id="tlabel"></span></div>
+    <div class="ctl"><label>&#9678; Radius</label>
+      <div class="trow"><input id="radius" type="range" min="1" step="1" /><span id="rlabel"></span></div>
+    </div>
+    <div class="ctl"><label>&#9201; Time of day</label>
+      <div class="trow"><input id="time" type="range" min="0" value="0" step="1" /><span id="tlabel"></span></div>
+    </div>
     <div id="btns">
       <button id="play" class="btn">&#9654; Play</button>
       <button id="toggle" class="btn">2D / 3D</button>
     </div>
   </div>
+  <p id="about">__ABOUT__</p>
 </div>
 <script>
   const MAPS = __MAPS__;  // [{name, subtitle, lat, lon, zoom, pitch, elev, cells, layers}]
@@ -225,8 +230,8 @@ _TEMPLATE = """<!DOCTYPE html>
     else if (e.key === '.') stepMonth(1);
     else if (e.key === '-' && yearsel) stepYear(-1);
     else if (e.key === '=' && yearsel) stepYear(1);
-    else if (e.key === 'ArrowLeft') stepTime(-1);
-    else if (e.key === 'ArrowRight') stepTime(1);
+    else if (e.key === ';') stepTime(-1);  // arrows are left to MapLibre for panning
+    else if (e.key === "'") stepTime(1);
   });
   slider.addEventListener('input', e => setFrame(+e.target.value));
   radius.addEventListener('input', e => { visRadius = +e.target.value; render(); });
