@@ -15,11 +15,9 @@ from sctwin.adapters.demand import AEMODemandAdapter
 from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.forecast.baselines import GBMForecaster
 from sctwin.forecast.chronos import ChronosForecaster
-from sctwin.forecast.features import FEATURE_COLS, build_supervised
+from sctwin.forecast.features import BASE_FEATURES, LAGS_BY_FREQ, build_supervised, feature_cols, resample
 from sctwin.geo import cell_of
 from sctwin.verify.results import verification_frame
-
-_COVARIATES = ["t2m", "hdd", "cdd", "hour", "dow", "month"]
 
 
 def main(
@@ -27,21 +25,26 @@ def main(
     end: Annotated[str, typer.Option(help="YYYY-MM-DD window end")] = "2023-01-21",
     region: Annotated[str, typer.Option(help="AEMO region (NSW1, VIC1, QLD1, SA1, TAS1)")] = "NSW1",
     res: Annotated[int, typer.Option(help="H3 resolution")] = 7,
+    freq: Annotated[str, typer.Option(help="forecast frequency: hour|day|week|month")] = "hour",
     device: Annotated[str, typer.Option(help="chronos device (cpu/cuda)")] = "cpu",
 ) -> None:
     """Score GBM vs Chronos-2 on real AEMO regional demand + real Sydney weather."""
+    if freq not in LAGS_BY_FREQ:
+        raise typer.BadParameter(f"--freq must be one of {', '.join(LAGS_BY_FREQ)}")
     s = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
     e = datetime.fromisoformat(end).replace(tzinfo=timezone.utc)
     cells = [cell_of(-33.87, 151.21, res)]  # one Sydney cell — AEMO demand is a single regional series
-    demand = AEMODemandAdapter(region=region).fetch(cells, s, e)
-    weather = CachingAdapter(OpenMeteoWeatherAdapter(), ".cache/open-meteo").fetch(cells, s, e)
-    sup = build_supervised(demand, weather)
-    print(f"\nreal AEMO {region} demand + Sydney weather — {s.date()}..{e.date()}, rows={sup.height}")
+    demand = resample(AEMODemandAdapter(region=region).fetch(cells, s, e), freq, agg="sum")
+    weather = resample(CachingAdapter(OpenMeteoWeatherAdapter(), ".cache/open-meteo").fetch(cells, s, e), freq)
+    lags = LAGS_BY_FREQ[freq]
+    sup = build_supervised(demand, weather, lags=lags)
+    print(f"\nreal AEMO {region} demand + Sydney weather — {s.date()}..{e.date()}, "
+          f"freq={freq}, lags={lags}, rows={sup.height}")
 
-    gbm = verification_frame(GBMForecaster(), sup, FEATURE_COLS)
+    gbm = verification_frame(GBMForecaster(), sup, feature_cols(lags))
     print(f"  {'GBM (+ weather, lags)':32s} MAE {float(gbm['abs_error'].mean()):7.1f}  "
           f"coverage {float(gbm['covered'].mean()):.2f}")
-    ch = ChronosForecaster(device=device).verify(sup, covariates=_COVARIATES)
+    ch = ChronosForecaster(device=device).verify(sup, covariates=BASE_FEATURES)
     print(f"  {'Chronos-2 (+ weather covariate)':32s} MAE {float(ch['abs_error'].mean()):7.1f}  "
           f"coverage {float(ch['covered'].mean()):.2f}")
 
