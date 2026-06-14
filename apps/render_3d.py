@@ -55,11 +55,27 @@ _TEMPLATE = """<!DOCTYPE html>
   .btn { flex: 1; }
   .mini { flex: 0 0 30px; }
   .btn:hover, .mini:hover { background: rgba(255,255,255,.13); }
-  #hint { font-size: 10.5px; opacity: .5; margin-top: 9px; }
+  #keys { position: absolute; top: 16px; right: 16px; z-index: 2; padding: 11px 13px;
+    background: rgba(16,18,28,.86); color: #e8eaf2; border-radius: 12px;
+    font: 12px/1.5 -apple-system, system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+  #keys .kh { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; opacity: .55; margin-bottom: 6px; }
+  #keys .kr { display: flex; align-items: center; gap: 9px; opacity: .85; margin: 3px 0; }
+  #keys .kr span { display: inline-flex; gap: 3px; flex: 0 0 52px; }
+  #keys kbd { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.22);
+    border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; min-width: 9px; text-align: center;
+    font: 11px ui-monospace, "SF Mono", monospace; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="keys">
+  <div class="kh">Shortcuts</div>
+  <div class="kr"><span><kbd>[</kbd><kbd>]</kbd></span> layer</div>
+  <div class="kr"><span><kbd>,</kbd><kbd>.</kbd></span> month</div>
+  <div class="kr" style="display: __YEAR_DISPLAY__"><span><kbd>-</kbd><kbd>=</kbd></span> year</div>
+  <div class="kr"><span><kbd>&#8592;</kbd><kbd>&#8594;</kbd></span> time</div>
+  <div class="kr"><span><kbd>click</kbd></span> move radius centre</div>
+</div>
 <div id="panel">
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
@@ -82,7 +98,6 @@ _TEMPLATE = """<!DOCTYPE html>
       <button id="play" class="btn">&#9654; Play</button>
       <button id="toggle" class="btn">2D / 3D</button>
     </div>
-    <div id="hint">Click a hex to move the radius centre &#8853; · [ ] layer · , . month · - = year · &#8592; &#8594; time</div>
   </div>
 </div>
 <script>
