@@ -62,7 +62,7 @@ _TEMPLATE = """<!DOCTYPE html>
 <div id="panel">
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
-  <div id="mapwrap"><label>Domain</label><select id="mapsel">__MAP_OPTIONS__</select></div>
+  <div id="mapwrap"><label>__MAP_LABEL__</label><select id="mapsel">__MAP_OPTIONS__</select></div>
   <div id="layerwrap"><label>Layer</label>
     <div id="lrow"><button id="lprev" class="mini">&#9664;</button><select id="layer"></select><button id="lnext" class="mini">&#9654;</button></div>
   </div>
@@ -231,18 +231,22 @@ def _js_map(m: dict) -> dict:
     }
 
 
-def to_self_contained_html(maps: list[dict], *, title: str = "sctwin", about: str = "", bearing: float = 18.0) -> str:
+def to_self_contained_html(
+    maps: list[dict], *, title: str = "sctwin", about: str = "", bearing: float = 18.0, map_label: str = "Domain"
+) -> str:
     """Render named maps as a self-contained 3D viewer with map/layer/time selectors.
 
     maps: [{"name", "subtitle", "lat", "lon", "zoom", "pitch", "elevation_scale",
             "layers": [{"name", "unit", "frames": [{"label", "records": [...]}]}]}].
     Each map is self-contained (own geometry + centre); switching maps recentres the view.
+    `map_label` titles the map selector (e.g. "Month" when each map is a sampled month).
     """
     js_maps = [_js_map(m) for m in maps]
     options = "".join(f'<option value="{i}">{m["name"]}</option>' for i, m in enumerate(maps))
     repl = {  # repr() on floats -> valid JS number literals; json.dumps for arrays
         "__MAPS__": json.dumps(js_maps),
         "__MAP_OPTIONS__": options,
+        "__MAP_LABEL__": map_label,
         "__BEARING__": repr(bearing),
         "__MAP_DISPLAY__": "block" if len(maps) > 1 else "none",
         "__TITLE__": title,

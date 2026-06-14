@@ -170,7 +170,7 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
     w_mae, e_mae = float(wres["abs_error"].mean()), float(eres["abs_error"].mean())
     return {
         "name": name,
-        "subtitle": f"forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f}",
+        "subtitle": f"{start} · forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f}",
         **_view(preset, zoom, r),
         "layers": [wlayer("temperature", day1), wlayer("heating degrees", hdd), *weather_out, *energy_out],
     }
