@@ -7,7 +7,8 @@ comparison runs on genuine load instead of a synthetic sinusoid.
 """
 
 import math
-from datetime import datetime
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 
 import numpy as np
 import polars as pl
@@ -28,6 +29,32 @@ LONDON_SMART_METERS_URL = (
 AEMO_URL = "https://aemo.com.au/aemo/data/nem/priceanddemand/PRICE_AND_DEMAND_{ym}_{region}.csv"
 # Electricity Maps total load (real demand, MW) — ~200 zones globally; free endpoint = last 24 h
 ELECTRICITY_MAPS_URL = "https://api.electricitymaps.com/v4/total-load/history"
+# ENTSO-E actual total load (real EU load, MW) — free token, multi-year history by bidding zone
+ENTSOE_URL = "https://web-api.tp.entsoe.eu/api"
+_ENTSOE_RES_MIN = {"PT60M": 60, "PT30M": 30, "PT15M": 15}
+
+
+def entsoe_load_to_long(xml_text: str, *, cell: str) -> pl.DataFrame:
+    """Parse an ENTSO-E A65 (actual total load) GL_MarketDocument into canonical (cell, time,
+    layer, value=MW). Each Period's points are timestamped from its start + position × resolution
+    (UTC). `{*}` matches the document's namespace without hard-coding it."""
+    times: list[datetime] = []
+    values: list[float] = []
+    for period in ET.fromstring(xml_text).findall(".//{*}Period"):  # iter() has no {*} wildcard; findall does
+        start_text = period.find("{*}timeInterval/{*}start").text  # type: ignore[union-attr]
+        start = datetime.fromisoformat(start_text.replace("Z", "+00:00"))  # type: ignore[union-attr]
+        step = timedelta(minutes=_ENTSOE_RES_MIN[period.find("{*}resolution").text])  # type: ignore[union-attr,index]
+        for pt in period.findall("{*}Point"):
+            times.append(start + (int(pt.find("{*}position").text) - 1) * step)  # type: ignore[union-attr,arg-type]
+            values.append(float(pt.find("{*}quantity").text))  # type: ignore[union-attr,arg-type]
+    schema = {"cell": pl.String, "time": pl.Datetime("us", "UTC"), "layer": pl.String, "value": pl.Float64}
+    if not times:
+        return pl.DataFrame(schema=schema)  # type: ignore[arg-type]
+    return (
+        pl.DataFrame({"cell": cell, "time": times, "layer": "load", "value": values})
+        .with_columns(pl.col("time").dt.cast_time_unit("us"))
+        .sort("time")
+    )
 
 
 def _fleet(cells: list[str], res: int, population: dict[str, float] | None) -> dict[str, float]:
