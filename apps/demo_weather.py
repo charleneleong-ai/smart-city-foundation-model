@@ -27,13 +27,15 @@ def main(
     date: Annotated[str, typer.Option(help="YYYY-MM-DD")] = "2020-01-15",
     radius: Annotated[float | None, typer.Option(help="km around the preset centre")] = None,
     res: Annotated[int | None, typer.Option(help="H3 resolution override (0..15)")] = None,
-    source: Annotated[str, typer.Option(help="open-meteo, or era5 (gridded; needs CDS key)")] = "open-meteo",
+    source: Annotated[str, typer.Option(
+        help="open-meteo (archive), open-meteo-forecast (real NWP, near-now dates), or era5")] = "open-meteo",
 ) -> None:
     """Render a day of weather over a city/region as a 3D map (Weather domain only)."""
     if city not in PRESETS:
         raise typer.BadParameter(f"--city must be one of {', '.join(sorted(PRESETS))}")
-    if source == "era5":
-        os.environ["WEATHER_SOURCE"] = "era5"
+    if source not in ("open-meteo", "open-meteo-forecast", "era5"):
+        raise typer.BadParameter("--source must be open-meteo, open-meteo-forecast, or era5")
+    os.environ["WEATHER_SOURCE"] = source
 
     m = weather_map(f"{city.upper()} weather", PRESETS[city], date, radius=radius, res=res)
     html = to_self_contained_html([m], title=f"{city.upper()} — 2 m air temperature", about=_ABOUT)

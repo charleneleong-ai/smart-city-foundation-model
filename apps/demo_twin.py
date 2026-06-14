@@ -59,15 +59,17 @@ def main(
     days: Annotated[int, typer.Option(help="days of history for the energy forecast")] = 5,
     radius: Annotated[float | None, typer.Option(help="km around the preset centre")] = None,
     res: Annotated[int | None, typer.Option(help="H3 resolution override")] = None,
-    source: Annotated[str, typer.Option(help="open-meteo, or era5 (gridded; needs CDS key)")] = "open-meteo",
+    source: Annotated[str, typer.Option(
+        help="open-meteo (archive), open-meteo-forecast (real NWP, near-now dates), or era5")] = "open-meteo",
     inline: Annotated[bool, typer.Option(
         help="force one self-contained file; default lazy-loads months over http")] = False,
 ) -> None:
     """Render the city digital twin (multi-domain, month/year-sampled 3D map)."""
     if city not in PRESETS:
         raise typer.BadParameter(f"--city must be one of {', '.join(sorted(PRESETS))}")
-    if source == "era5":
-        os.environ["WEATHER_SOURCE"] = "era5"
+    if source not in ("open-meteo", "open-meteo-forecast", "era5"):
+        raise typer.BadParameter("--source must be open-meteo, open-meteo-forecast, or era5")
+    os.environ["WEATHER_SOURCE"] = source
 
     p = PRESETS[city]
     year_nums = _years(date, years)
