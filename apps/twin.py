@@ -17,7 +17,7 @@ from sctwin.adapters.base import LayerAdapter
 from sctwin.adapters.cache import CachingAdapter
 from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
-from sctwin.app.render import h3_layer_records
+from sctwin.app.render import _ramp, h3_layer_records
 from sctwin.forecast.baselines import GBMForecaster
 from sctwin.forecast.features import FEATURE_COLS, build_supervised
 from sctwin.geo import Cell, center_of
@@ -137,9 +137,28 @@ def _verify_layers(results: pl.DataFrame, specs: list, group: str) -> list[dict]
     for field, nm, unit, mode in specs:
         fl = as_layer(res_num, field)
         vmin, vmax = _range(fl["value"], mode)
-        out.append({"name": nm, "unit": unit, "group": group,
+        out.append({"name": nm, "unit": unit, "group": group, "mode": mode,
                     "frames": _frames(fl, times, vmin, vmax, "%m-%d %H:%M")})
     return out
+
+
+def unify_ranges(maps: list[dict]) -> None:
+    """Recolor each layer on a range shared across all maps so colour/height are absolute
+    across months, not self-normalised per month. Mutates in place; assumes shared layer
+    structure (all built by `twin_map`). No-op for single-map builds."""
+    if len(maps) < 2:
+        return
+    for j, ref in enumerate(maps[0]["layers"]):
+        values = [r["value"] for m in maps for fr in m["layers"][j]["frames"] for r in fr["records"]]
+        vmin, vmax = _range(pl.Series(values), ref["mode"])
+        span = (vmax - vmin) or 1.0
+        for m in maps:
+            layer = m["layers"][j]
+            layer["vmin"], layer["vmax"] = vmin, vmax  # pin the legend to the shared range too
+            for fr in layer["frames"]:
+                for r in fr["records"]:
+                    t = (r["value"] - vmin) / span
+                    r["color"], r["height"] = list(_ramp(t)), t
 
 
 def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res=None) -> dict:
@@ -157,7 +176,8 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
 
     def wlayer(nm: str, f: pl.DataFrame) -> dict:
         vmin, vmax = float(f["value"].min()), float(f["value"].max())
-        return {"name": nm, "unit": "°C", "group": "Inputs", "frames": _frames(f, hours, vmin, vmax, "%H:%M")}
+        return {"name": nm, "unit": "°C", "group": "Inputs", "mode": "auto",
+                "frames": _frames(f, hours, vmin, vmax, "%H:%M")}
 
     # Output 1: weather forecast (predict t2m from calendar + its own lags)
     wres = verification_frame(GBMForecaster(), build_supervised(wx, wx), _FORECAST_FEATURES, alpha=0.1)
@@ -170,7 +190,7 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
     w_mae, e_mae = float(wres["abs_error"].mean()), float(eres["abs_error"].mean())
     return {
         "name": name,
-        "subtitle": f"forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f}",
+        "subtitle": f"{start} · forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f}",
         **_view(preset, zoom, r),
         "layers": [wlayer("temperature", day1), wlayer("heating degrees", hdd), *weather_out, *energy_out],
     }
