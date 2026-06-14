@@ -27,6 +27,7 @@ _TEMPLATE = """<!DOCTYPE html>
 <script src="https://unpkg.com/deck.gl@9.0.38/dist.min.js"></script>
 <style>
   html, body, #map { margin: 0; height: 100%; width: 100%; background: #0b0b10; }
+  .maplibregl-marker { z-index: 5; }  /* keep the radius-centre pin above the deck.gl overlay */
   #panel { position: absolute; top: 16px; left: 16px; width: 300px; padding: 14px 16px; z-index: 2;
     background: rgba(16,18,28,.86); color: #e8eaf2; border-radius: 12px;
     font: 13px/1.45 -apple-system, system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.45); }
@@ -138,7 +139,8 @@ _TEMPLATE = """<!DOCTYPE html>
   let visRadius = 0, timer = null;  // km radius around the (movable) centre; set once distances are computed
   let center = [MAPS[0].lon, MAPS[0].lat], cellDist = [];
   const M = () => MAPS[mapIdx];
-  const marker = new maplibregl.Marker({ color: '#ff5a3c' }).setLngLat(center).addTo(map);
+  const marker = new maplibregl.Marker({ color: '#ff5a3c', scale: 1.25 }).setLngLat(center).addTo(map);
+  marker.getElement().style.zIndex = '5';  // float the centre pin above the deck.gl hex overlay canvas
 
   function hav(aLng, aLat, bLng, bLat) {  // km between two [lng,lat]
     const r = Math.PI / 180, R = 6371;
