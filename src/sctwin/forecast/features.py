@@ -1,3 +1,6 @@
+from datetime import datetime
+from typing import cast
+
 import numpy as np
 import polars as pl
 
@@ -30,6 +33,34 @@ def resample(frame: pl.DataFrame, freq: str, *, agg: str = "mean") -> pl.DataFra
         frame.sort(["cell", "layer", "time"])
         .group_by_dynamic("time", every=_EVERY[freq], group_by=["cell", "layer"])
         .agg(reducer.alias("value"))
+        .select("cell", "time", "layer", "value")
+    )
+
+
+def regularize(frame: pl.DataFrame, freq: str) -> pl.DataFrame:
+    """Put *all* (cell) series on one shared, gap-free grid at `freq` — Chronos `predict_df`
+    needs every id on the same regular index. Clip to the window common to all cells, build the
+    full grid, and forward-fill the value (persistence imputation for real-meter dropouts /
+    ragged date ranges). Returns empty if the cells share no overlapping window."""
+    if frame.is_empty():
+        return frame
+    bounds = frame.group_by("cell").agg(pl.col("time").min().alias("lo"), pl.col("time").max().alias("hi"))
+    common_lo, common_hi = cast(datetime, bounds["lo"].max()), cast(datetime, bounds["hi"].min())
+    if common_lo > common_hi:  # no window common to all cells
+        return frame.clear()
+    # forward-fill over the union range (so the fill sees readings before the common window), then clip
+    grid = pl.datetime_range(
+        cast(datetime, bounds["lo"].min()), cast(datetime, bounds["hi"].max()),
+        interval=_EVERY[freq], time_zone="UTC", eager=True,
+    ).dt.cast_time_unit("us")
+    full = frame.select("cell").unique().join(pl.DataFrame({"time": grid}), how="cross")
+    return (
+        full.join(frame, on=["cell", "time"], how="left")
+        .sort("cell", "time")
+        .with_columns(pl.col("value").forward_fill().over("cell"))
+        .filter((pl.col("time") >= common_lo) & (pl.col("time") <= common_hi))
+        .drop_nulls("value")
+        .with_columns(pl.lit("load").alias("layer"))
         .select("cell", "time", "layer", "value")
     )
 
