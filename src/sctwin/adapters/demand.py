@@ -12,7 +12,7 @@ EIA (US balancing authorities), ENTSO-E (EU bidding zones), NESO (GB), AEMO (AU)
 import io
 import os
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -23,13 +23,32 @@ from sctwin.demand import (
     AEMO_URL,
     ELECTRICITY_MAPS_URL,
     ELECTRICITY_URL,
+    ENTSOE_URL,
     LONDON_SMART_METERS_URL,
     aemo_to_long,
     el_maps_to_long,
     electricity_to_long,
+    entsoe_load_to_long,
     london_smart_meters_to_long,
 )
 from sctwin.geo import Cell, center_of
+
+# ENTSO-E bidding-zone EIC codes (a starter set; the platform covers all of Europe)
+_ENTSOE_EIC = {
+    "GB": "10YGB----------A", "FR": "10YFR-RTE------C", "DE-LU": "10Y1001A1001A82H",
+    "ES": "10YES-REE------0", "NL": "10YNL----------L", "BE": "10YBE----------2",
+    "IT-NORD": "10Y1001A1001A73I", "PL": "10YPL-AREA-----S", "SE-SE3": "10Y1001A1001A46L",
+}
+
+
+def _entsoe_windows(start: datetime, end: datetime) -> list[tuple[str, str]]:
+    """(periodStart, periodEnd) yyyyMMddHHmm windows of ≤1 year — ENTSO-E caps each request."""
+    out, cur = [], start
+    while cur < end:
+        nxt = min(cur + timedelta(days=365), end)
+        out.append((cur.strftime("%Y%m%d%H%M"), nxt.strftime("%Y%m%d%H%M")))
+        cur = nxt
+    return out
 
 _FAR_PAST = datetime(1970, 1, 1, tzinfo=timezone.utc)  # accumulate every fetched row into the cache
 _FAR_FUTURE = datetime(2100, 1, 1, tzinfo=timezone.utc)
@@ -136,11 +155,39 @@ class ElectricityMapsAdapter:
         return merged.filter((pl.col("time") >= start) & (pl.col("time") <= end))
 
 
+class ENTSOEAdapter:
+    """Real EU actual total load (MW) from the ENTSO-E Transparency Platform — multi-year history
+    by bidding zone (free security token), looped in ≤1-year requests. Pinned to one cell."""
+
+    name = "demand.load"
+
+    def __init__(self, zone: str = "GB", *, token: str | None = None) -> None:
+        self._zone = zone
+        self._token = token or os.environ.get("ENTSOE_TOKEN", "")
+
+    def _read(self, period_start: str, period_end: str) -> str:
+        params = {
+            "securityToken": self._token, "documentType": "A65", "processType": "A16",
+            "outBiddingZone_Domain": _ENTSOE_EIC[self._zone], "periodStart": period_start, "periodEnd": period_end,
+        }
+        resp = httpx.get(ENTSOE_URL, params=params, timeout=120.0)
+        resp.raise_for_status()
+        return resp.text
+
+    def fetch(self, cells: list[Cell], start: datetime, end: datetime) -> pl.DataFrame:
+        windows = _entsoe_windows(start, end)
+        if not windows:
+            return entsoe_load_to_long("<empty/>", cell=cells[0].h3)
+        out = pl.concat([entsoe_load_to_long(self._read(ps, pe), cell=cells[0].h3) for ps, pe in windows])
+        return out.filter((pl.col("time") >= start) & (pl.col("time") <= end)).unique("time", keep="last").sort("time")
+
+
 _ADAPTERS: dict[str, Callable[[], LayerAdapter]] = {
     "london": LondonSmartMeterAdapter,
     "electricity": ElectricityMeterAdapter,
     "aemo": AEMODemandAdapter,
     "electricitymaps": ElectricityMapsAdapter,
+    "entsoe": ENTSOEAdapter,
 }
 
 
