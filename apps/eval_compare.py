@@ -17,7 +17,7 @@ from sctwin.adapters.demand import AEMODemandAdapter, LondonSmartMeterAdapter
 from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.forecast.baselines import GBMForecaster
-from sctwin.forecast.chronos import ChronosForecaster
+from sctwin.forecast.chronos import ChronosForecaster, _time_split
 from sctwin.forecast.features import (
     BASE_FEATURES,
     LAGS_BY_FREQ,
@@ -30,6 +30,7 @@ from sctwin.geo import cell_of
 from sctwin.verify.results import verification_frame
 
 _MIN_ROWS = 20  # below this the coarse-resolution sample is too thin to report
+_MAX_HORIZON = 1500  # skip Chronos beyond this (hourly over a long window = a multi-thousand-step forecast)
 
 
 def _utc(y: int, m: int, d: int) -> datetime:
@@ -73,6 +74,10 @@ def main(
                 print(f"{region:12s} {freq:6s} {sup.height:>5d}  (insufficient history for the seasonal lag)")
                 continue
             gbm = float(verification_frame(GBMForecaster(), sup, feature_cols(lags))["abs_error"].mean())
+            horizon = _time_split(sup, 0.25)[2]
+            if horizon > _MAX_HORIZON:  # a multi-thousand-step forecast (hourly over a long window) would hang
+                print(f"{region:12s} {freq:6s} {sup.height:>5d}  {gbm:>11.1f}  {'chronos: horizon ' + str(horizon):>12s}")
+                continue
             try:
                 chronos = float(ChronosForecaster(pipeline=pipe).verify(sup, covariates=BASE_FEATURES)["abs_error"].mean())
             except Exception as exc:  # a gappy/short series can trip predict_df — don't kill the sweep
