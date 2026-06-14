@@ -5,8 +5,11 @@ Run: uv run python apps/demo_weather.py --city uk --radius 250 --res 4
 For the full multi-domain twin (Weather + Energy), use apps/demo_twin.py.
 """
 
-import argparse
 import os
+from pathlib import Path
+from typing import Annotated
+
+import typer
 
 from presets import PRESETS
 from render_3d import to_self_contained_html
@@ -19,28 +22,25 @@ _ABOUT = (
 )
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Render a day of Open-Meteo weather as a 3D map.")
-    ap.add_argument("--city", default="uk", choices=sorted(PRESETS), help="preset region")
-    ap.add_argument("--date", default="2020-01-15", help="YYYY-MM-DD")
-    ap.add_argument("--radius", type=float, default=None, help="km around the preset centre")
-    ap.add_argument("--res", type=int, default=None, help="H3 resolution override (0..15)")
-    ap.add_argument("--source", default="open-meteo", choices=["open-meteo", "era5"],
-                    help="era5 = gridded (dense regional, no rate limit; needs CDS key)")
-    args = ap.parse_args()
-    if args.source == "era5":
+def main(
+    city: Annotated[str, typer.Option(help="preset region")] = "uk",
+    date: Annotated[str, typer.Option(help="YYYY-MM-DD")] = "2020-01-15",
+    radius: Annotated[float | None, typer.Option(help="km around the preset centre")] = None,
+    res: Annotated[int | None, typer.Option(help="H3 resolution override (0..15)")] = None,
+    source: Annotated[str, typer.Option(help="open-meteo, or era5 (gridded; needs CDS key)")] = "open-meteo",
+) -> None:
+    """Render a day of weather over a city/region as a 3D map (Weather domain only)."""
+    if city not in PRESETS:
+        raise typer.BadParameter(f"--city must be one of {', '.join(sorted(PRESETS))}")
+    if source == "era5":
         os.environ["WEATHER_SOURCE"] = "era5"
 
-    p = PRESETS[args.city]
-    m = weather_map(f"{args.city.upper()} weather", p, args.date, radius=args.radius, res=args.res)
-    html = to_self_contained_html(
-        [m], title=f"{args.city.upper()} — 2 m air temperature", about=_ABOUT
-    )
-    out = f"{args.city}_3d.html"
-    with open(out, "w") as f:
-        f.write(html)
+    m = weather_map(f"{city.upper()} weather", PRESETS[city], date, radius=radius, res=res)
+    html = to_self_contained_html([m], title=f"{city.upper()} — 2 m air temperature", about=_ABOUT)
+    out = Path(f"{city}_3d.html")
+    out.write_text(html)
     print(f"wrote {out} — {len(m['layers'])} layers ({', '.join(layer['name'] for layer in m['layers'])})")
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)
