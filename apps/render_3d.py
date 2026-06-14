@@ -221,7 +221,7 @@ def _js_layer(layer: dict) -> dict:
     ]
     vals = [v for f in frames for v in f["v"]] or [0.0]
     return {"name": layer["name"], "unit": layer.get("unit", ""), "group": layer.get("group", ""),
-            "vmin": min(vals), "vmax": max(vals), "frames": frames}
+            "vmin": layer.get("vmin", min(vals)), "vmax": layer.get("vmax", max(vals)), "frames": frames}
 
 
 def _js_map(m: dict) -> dict:

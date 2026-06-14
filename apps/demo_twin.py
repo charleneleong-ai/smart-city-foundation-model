@@ -14,7 +14,7 @@ from pathlib import Path
 
 from presets import PRESETS
 from render_3d import to_lazy_html, to_self_contained_html
-from twin import twin_map
+from twin import twin_map, unify_ranges
 
 
 def _sample_dates(date: str, months: str | None, day: int) -> list[str]:
@@ -66,6 +66,7 @@ def main() -> None:
         )
         for d in dates
     ]
+    unify_ranges(maps)  # absolute gradient: one colour/height scale per layer across all months
     title = f"{args.city.upper()} — city digital twin"
     label = "Month" if multi else "Domain"
     out = Path(f"{args.city}_twin_3d.html")
