@@ -15,7 +15,7 @@ import polars as pl
 
 from sctwin.adapters.base import LayerAdapter
 from sctwin.adapters.cache import CachingAdapter
-from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
+from sctwin.adapters.open_meteo import OpenMeteoForecastAdapter, OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.app.render import _ramp, h3_layer_records
 from sctwin.demand import ev_charging_load
@@ -31,11 +31,15 @@ MAX_CELLS = 1000  # batched ~100 coords/request; Open-Meteo's free tier rate-lim
 
 
 def _source() -> LayerAdapter:
-    """WEATHER_SOURCE=era5 -> gridded ERA5 (one request, no rate limit); else Open-Meteo."""
-    if os.environ.get("WEATHER_SOURCE") == "era5":
+    """WEATHER_SOURCE: era5 -> gridded reanalysis; open-meteo-forecast -> real NWP (future
+    covariate); else Open-Meteo archive (reanalysis, past)."""
+    kind = os.environ.get("WEATHER_SOURCE", "open-meteo")
+    if kind == "era5":
         from sctwin.adapters.era5 import ERA5Adapter
 
         return ERA5Adapter()
+    if kind == "open-meteo-forecast":
+        return OpenMeteoForecastAdapter()
     return OpenMeteoWeatherAdapter()
 
 

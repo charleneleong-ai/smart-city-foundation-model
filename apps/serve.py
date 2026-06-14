@@ -16,16 +16,22 @@ import uvicorn
 
 from sctwin.adapters.cache import CachingAdapter
 from sctwin.adapters.era5 import ERA5Adapter
-from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
+from sctwin.adapters.open_meteo import OpenMeteoForecastAdapter, OpenMeteoWeatherAdapter
 from sctwin.app.service import build_app
 from sctwin.registry import Registry
 
 
+def _adapter(source: str):
+    if source == "era5":
+        return ERA5Adapter()
+    if source == "open-meteo-forecast":
+        return OpenMeteoForecastAdapter()
+    return OpenMeteoWeatherAdapter()
+
+
 def _app(source: str):
-    era5 = source == "era5"
     reg = Registry()
-    reg.register(CachingAdapter(ERA5Adapter() if era5 else OpenMeteoWeatherAdapter(),
-                                ".cache/era5" if era5 else ".cache/open-meteo"))
+    reg.register(CachingAdapter(_adapter(source), f".cache/{source}"))
     return build_app(reg)
 
 
@@ -35,12 +41,13 @@ app = _app(os.environ.get("WEATHER_SOURCE", "open-meteo"))  # ASGI app for `uvic
 def main(
     host: Annotated[str, typer.Option(help="bind address")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="port")] = 8000,
-    source: Annotated[str, typer.Option(help="open-meteo, or era5 (gridded; needs CDS key)")] =
+    source: Annotated[str, typer.Option(
+        help="open-meteo (archive), open-meteo-forecast (real NWP), or era5")] =
         os.environ.get("WEATHER_SOURCE", "open-meteo"),
 ) -> None:
     """Serve the live twin — tiles loaded around a movable centre on demand."""
-    if source not in ("open-meteo", "era5"):
-        raise typer.BadParameter("--source must be open-meteo or era5")
+    if source not in ("open-meteo", "open-meteo-forecast", "era5"):
+        raise typer.BadParameter("--source must be open-meteo, open-meteo-forecast, or era5")
     uvicorn.run(_app(source), host=host, port=port)
 
 

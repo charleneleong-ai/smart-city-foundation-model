@@ -7,7 +7,8 @@ import polars as pl
 from sctwin.geo import Cell, center_of
 from sctwin.schema import empty_frame, validate_frame
 
-ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"  # reanalysis: past, decades back
+FORECAST_URL = "https://api.open-meteo.com/v1/forecast"  # real NWP: recent past + up to 16 days ahead
 _BATCH = 100  # Open-Meteo accepts many comma-separated coordinates per request
 _RETRIES = 4  # the free tier rate-limits by location count (429) — back off and retry
 
@@ -15,8 +16,9 @@ _RETRIES = 4  # the free tier rate-limits by location count (429) — back off a
 class OpenMeteoWeatherAdapter:
     name = "weather.t2m"
 
-    def __init__(self, client: httpx.Client | None = None) -> None:
+    def __init__(self, client: httpx.Client | None = None, *, url: str = ARCHIVE_URL) -> None:
         self._client = client or httpx.Client(timeout=60.0)
+        self._url = url
 
     def fetch(self, cells: list[Cell], start: datetime, end: datetime) -> pl.DataFrame:
         frames = [
@@ -35,7 +37,7 @@ class OpenMeteoWeatherAdapter:
             "hourly": "temperature_2m",
         }
         for attempt in range(_RETRIES):
-            resp = self._client.get(ARCHIVE_URL, params=params)
+            resp = self._client.get(self._url, params=params)
             if resp.status_code == 429 and attempt < _RETRIES - 1:
                 time.sleep(2**attempt)  # 1, 2, 4 s backoff
                 continue
@@ -55,3 +57,10 @@ class OpenMeteoWeatherAdapter:
             for cell, r in zip(cells, results, strict=True)
         ]
         return pl.concat(frames)
+
+
+def OpenMeteoForecastAdapter(client: httpx.Client | None = None) -> OpenMeteoWeatherAdapter:
+    """Open-Meteo *forecast* endpoint — real NWP (recent past + up to 16 days ahead), the
+    future-weather covariate for the demand cascade. Same shape as the archive adapter; only
+    valid for near-now dates (the archive serves arbitrary history)."""
+    return OpenMeteoWeatherAdapter(client, url=FORECAST_URL)
