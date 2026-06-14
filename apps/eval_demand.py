@@ -8,10 +8,10 @@ Run: uv run --extra forecast --extra tsfm python apps/eval_demand.py
 from datetime import datetime
 from typing import Annotated
 
-import polars as pl
 import typer
 
-from sctwin.demand import ELECTRICITY_URL, electricity_to_long
+from sctwin.adapters.demand import ElectricityMeterAdapter
+from sctwin.app.cells import cells_in_bbox
 from sctwin.forecast.baselines import GBMForecaster
 from sctwin.forecast.chronos import ChronosForecaster
 from sctwin.forecast.features import CALENDAR_COLS, build_calendar_supervised
@@ -26,7 +26,8 @@ def main(
 ) -> None:
     """Score GBM vs Chronos-2 on real electricity load (calendar + lags, no weather)."""
     s, e = datetime.fromisoformat(start), datetime.fromisoformat(end)
-    demand = electricity_to_long(pl.read_parquet(ELECTRICITY_URL), start=s, end=e, n_meters=meters)
+    cells = cells_in_bbox(51.40, -0.25, 51.60, 0.05, res=7)[:meters]  # cell ids only (no weather here)
+    demand = ElectricityMeterAdapter().fetch(cells, s, e)
     sup = build_calendar_supervised(demand)
     print(f"\nreal demand — {meters} meters, {s.date()}..{e.date()}, supervised rows={sup.height}")
 
