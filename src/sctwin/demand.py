@@ -31,6 +31,11 @@ AEMO_URL = "https://aemo.com.au/aemo/data/nem/priceanddemand/PRICE_AND_DEMAND_{y
 ELECTRICITY_MAPS_URL = "https://api.electricitymaps.com/v4/total-load/history"
 # ENTSO-E actual total load (real EU load, MW) — free token, multi-year history by bidding zone
 ENTSOE_URL = "https://web-api.tp.entsoe.eu/api"
+# EIA Hourly Electric Grid Monitor (real US demand, MW) — free key, ~2015→ by balancing authority
+EIA_URL = "https://api.eia.gov/v2/electricity/rto/region-data/data/"
+
+# canonical demand schema — the shape every parser below emits (and returns empty when there's no data)
+_CANONICAL_SCHEMA = {"cell": pl.String, "time": pl.Datetime("us", "UTC"), "layer": pl.String, "value": pl.Float64}
 _ENTSOE_RES_MIN = {"PT60M": 60, "PT30M": 30, "PT15M": 15}
 
 
@@ -47,9 +52,8 @@ def entsoe_load_to_long(xml_text: str, *, cell: str) -> pl.DataFrame:
         for pt in period.findall("{*}Point"):
             times.append(start + (int(pt.find("{*}position").text) - 1) * step)  # type: ignore[union-attr,arg-type]
             values.append(float(pt.find("{*}quantity").text))  # type: ignore[union-attr,arg-type]
-    schema = {"cell": pl.String, "time": pl.Datetime("us", "UTC"), "layer": pl.String, "value": pl.Float64}
     if not times:
-        return pl.DataFrame(schema=schema)  # type: ignore[arg-type]
+        return pl.DataFrame(schema=_CANONICAL_SCHEMA)  # type: ignore[arg-type]
     return (
         pl.DataFrame({"cell": cell, "time": times, "layer": "load", "value": values})
         .with_columns(pl.col("time").dt.cast_time_unit("us"))
@@ -132,8 +136,7 @@ def el_maps_to_long(history: list[dict], *, cell: str, start: datetime, end: dat
     """Electricity Maps total-load history (list of {datetime, value MW, …}) → hourly canonical
     (cell, time, layer, value=MW) on one cell — a single zonal demand series, windowed."""
     if not history:
-        schema = {"cell": pl.String, "time": pl.Datetime("us", "UTC"), "layer": pl.String, "value": pl.Float64}
-        return pl.DataFrame(schema=schema)  # type: ignore[arg-type]
+        return pl.DataFrame(schema=_CANONICAL_SCHEMA)  # type: ignore[arg-type]
     return (
         pl.DataFrame(history)
         .select(
@@ -142,6 +145,25 @@ def el_maps_to_long(history: list[dict], *, cell: str, start: datetime, end: dat
             pl.col("value").cast(pl.Float64),
         )
         .filter((pl.col("time") >= start) & (pl.col("time") <= end))
+        .with_columns(pl.lit(cell).alias("cell"), pl.lit("load").alias("layer"))
+        .select("cell", "time", "layer", "value")
+        .sort("time")
+    )
+
+
+def eia_load_to_long(data: list[dict], *, cell: str) -> pl.DataFrame:
+    """Parse EIA region-data rows ({period 'YYYY-MM-DDTHH', value MW, …}, demand type=D) into
+    canonical (cell, time, layer, value=MW) on one cell. `period` is UTC, hourly."""
+    if not data:
+        return pl.DataFrame(schema=_CANONICAL_SCHEMA)  # type: ignore[arg-type]
+    return (
+        pl.DataFrame(data)
+        .select(
+            (pl.col("period") + ":00").str.to_datetime("%Y-%m-%dT%H:%M")  # EIA period is hour-only
+            .dt.replace_time_zone("UTC").dt.cast_time_unit("us").alias("time"),
+            pl.col("value").cast(pl.Float64, strict=False),  # EIA reports gaps as null -> dropped below
+        )
+        .drop_nulls("value")
         .with_columns(pl.lit(cell).alias("cell"), pl.lit("load").alias("layer"))
         .select("cell", "time", "layer", "value")
         .sort("time")

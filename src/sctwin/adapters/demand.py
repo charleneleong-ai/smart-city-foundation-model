@@ -21,11 +21,13 @@ import polars as pl
 from sctwin.adapters.base import LayerAdapter
 from sctwin.demand import (
     AEMO_URL,
+    EIA_URL,
     ELECTRICITY_MAPS_URL,
     ELECTRICITY_URL,
     ENTSOE_URL,
     LONDON_SMART_METERS_URL,
     aemo_to_long,
+    eia_load_to_long,
     el_maps_to_long,
     electricity_to_long,
     entsoe_load_to_long,
@@ -182,12 +184,47 @@ class ENTSOEAdapter:
         return out.filter((pl.col("time") >= start) & (pl.col("time") <= end)).unique("time", keep="last").sort("time")
 
 
+class EIADemandAdapter:
+    """Real US hourly demand (MW) from the EIA Hourly Electric Grid Monitor — multi-year history
+    by balancing authority (free API key), paged in ≤5000-row requests. Pinned to one cell.
+    `respondent` is a BA code (CISO, PJM, MISO, ERCO, ISNE, NYIS, …); type=D is demand."""
+
+    name = "demand.load"
+    _PAGE = 5000  # EIA v2 caps each request at 5000 rows
+
+    def __init__(self, respondent: str = "CISO", *, token: str | None = None) -> None:
+        self._respondent = respondent
+        self._token = token or os.environ.get("EIA_API_KEY", "")
+
+    def _read(self, start: datetime, end: datetime) -> list[dict]:
+        rows: list[dict] = []
+        while True:
+            params = {
+                "api_key": self._token, "frequency": "hourly", "data[0]": "value",
+                "facets[respondent][]": self._respondent, "facets[type][]": "D",
+                "start": start.strftime("%Y-%m-%dT%H"), "end": end.strftime("%Y-%m-%dT%H"),
+                "sort[0][column]": "period", "sort[0][direction]": "asc",
+                "offset": str(len(rows)), "length": str(self._PAGE),
+            }
+            resp = httpx.get(EIA_URL, params=params, timeout=120.0)
+            resp.raise_for_status()
+            page = resp.json().get("response", {}).get("data", [])
+            rows.extend(page)
+            if len(page) < self._PAGE:
+                return rows  # last (partial) page reached
+
+    def fetch(self, cells: list[Cell], start: datetime, end: datetime) -> pl.DataFrame:
+        out = eia_load_to_long(self._read(start, end), cell=cells[0].h3)  # one BA series -> one cell
+        return out.filter((pl.col("time") >= start) & (pl.col("time") <= end))
+
+
 _ADAPTERS: dict[str, Callable[[], LayerAdapter]] = {
     "london": LondonSmartMeterAdapter,
     "electricity": ElectricityMeterAdapter,
     "aemo": AEMODemandAdapter,
     "electricitymaps": ElectricityMapsAdapter,
     "entsoe": ENTSOEAdapter,
+    "eia": EIADemandAdapter,
 }
 
 
