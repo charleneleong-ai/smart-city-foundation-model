@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .DS_Store
 *_3d.html
+*_3d.data/
 weather_map.html
 .cache/
 .era5/

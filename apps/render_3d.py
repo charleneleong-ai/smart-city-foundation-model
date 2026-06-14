@@ -80,7 +80,8 @@ _TEMPLATE = """<!DOCTYPE html>
   </div>
 </div>
 <script>
-  const MAPS = __MAPS__;  // [{name, subtitle, lat, lon, zoom, pitch, elev, maxdist, cells, layers}]
+  const MAPS = __MAPS__;  // [{name, subtitle, lat, lon, zoom, pitch, elev, cells, layers}]
+  const DATA_DIR = "__DATA_DIR__";  // '' = fully inline; else fetch DATA_DIR/<i>.json on first select (lazy)
   let mapIdx = 0, layerIdx = 0, frame = 0, extruded = true;
   const map = new maplibregl.Map({
     container: 'map',
@@ -147,9 +148,14 @@ _TEMPLATE = """<!DOCTYPE html>
   }
   function setFrame(i) { frame = i; slider.value = i; render(); }
 
-  function selectMap(i) {
+  async function selectMap(i) {
     mapIdx = i; layerIdx = 0; frame = 0;
     const m = M();
+    if (!m.layers) {  // lazy: fetch this map's cells+layers once, then cache on the object
+      document.getElementById('subtitle').textContent = 'loading ' + m.name + ' \\u2026';
+      const d = await (await fetch(DATA_DIR + '/' + i + '.json')).json();
+      m.cells = d.cells; m.layers = d.layers;
+    }
     map.jumpTo({ center: [m.lon, m.lat], zoom: m.zoom, pitch: m.pitch });
     document.getElementById('subtitle').textContent = m.subtitle;
     const groups = {};
@@ -231,6 +237,27 @@ def _js_map(m: dict) -> dict:
     }
 
 
+_META_KEYS = ("name", "subtitle", "lat", "lon", "zoom", "pitch", "elev")
+
+
+def _fill(maps_json: list[dict], *, title: str, about: str, bearing: float, map_label: str, data_dir: str) -> str:
+    options = "".join(f'<option value="{i}">{m["name"]}</option>' for i, m in enumerate(maps_json))
+    repl = {  # repr() on floats -> valid JS number literals; json.dumps for arrays
+        "__MAPS__": json.dumps(maps_json),
+        "__MAP_OPTIONS__": options,
+        "__MAP_LABEL__": map_label,
+        "__BEARING__": repr(bearing),
+        "__MAP_DISPLAY__": "block" if len(maps_json) > 1 else "none",
+        "__TITLE__": title,
+        "__ABOUT__": about,
+        "__DATA_DIR__": data_dir,
+    }
+    html = _TEMPLATE
+    for k, v in repl.items():
+        html = html.replace(k, v)
+    return html
+
+
 def to_self_contained_html(
     maps: list[dict], *, title: str = "sctwin", about: str = "", bearing: float = 18.0, map_label: str = "Domain"
 ) -> str:
@@ -241,18 +268,20 @@ def to_self_contained_html(
     Each map is self-contained (own geometry + centre); switching maps recentres the view.
     `map_label` titles the map selector (e.g. "Month" when each map is a sampled month).
     """
-    js_maps = [_js_map(m) for m in maps]
-    options = "".join(f'<option value="{i}">{m["name"]}</option>' for i, m in enumerate(maps))
-    repl = {  # repr() on floats -> valid JS number literals; json.dumps for arrays
-        "__MAPS__": json.dumps(js_maps),
-        "__MAP_OPTIONS__": options,
-        "__MAP_LABEL__": map_label,
-        "__BEARING__": repr(bearing),
-        "__MAP_DISPLAY__": "block" if len(maps) > 1 else "none",
-        "__TITLE__": title,
-        "__ABOUT__": about,
-    }
-    html = _TEMPLATE
-    for k, v in repl.items():
-        html = html.replace(k, v)
-    return html
+    return _fill([_js_map(m) for m in maps], title=title, about=about, bearing=bearing,
+                 map_label=map_label, data_dir="")
+
+
+def to_lazy_html(
+    maps: list[dict], *, data_dir: str, title: str = "sctwin", about: str = "", bearing: float = 18.0,
+    map_label: str = "Domain",
+) -> tuple[str, list[dict]]:
+    """Like `to_self_contained_html` but embeds only per-map metadata; each map's heavy
+    cells+layers payload is returned separately to be written as `<data_dir>/<i>.json` and
+    fetched on demand when that map is first selected. Keeps the initial page small (one map's
+    worth) instead of all N — needed once N months blow past a single-file budget. The viewer
+    must be served over http (fetch can't read file://). Returns (html, payloads)."""
+    payloads = [_js_map(m) for m in maps]
+    meta = [{k: p[k] for k in _META_KEYS} for p in payloads]
+    html = _fill(meta, title=title, about=about, bearing=bearing, map_label=map_label, data_dir=data_dir)
+    return html, payloads
