@@ -18,7 +18,14 @@ from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.forecast.baselines import GBMForecaster
 from sctwin.forecast.chronos import ChronosForecaster
-from sctwin.forecast.features import BASE_FEATURES, LAGS_BY_FREQ, build_supervised, feature_cols, resample
+from sctwin.forecast.features import (
+    BASE_FEATURES,
+    LAGS_BY_FREQ,
+    build_supervised,
+    feature_cols,
+    regularize,
+    resample,
+)
 from sctwin.geo import cell_of
 from sctwin.verify.results import verification_frame
 
@@ -60,7 +67,8 @@ def main(
     for region, (demand, weather) in (("UK London", _london(meters)), ("AU NSW", _nsw())):
         for freq in chosen:
             lags = LAGS_BY_FREQ[freq]
-            sup = build_supervised(resample(demand, freq, agg="sum"), resample(weather, freq), lags=lags)
+            d = regularize(resample(demand, freq, agg="sum"), freq)  # gap-free grid so Chronos predict_df works
+            sup = build_supervised(d, resample(weather, freq), lags=lags)
             if sup.height < _MIN_ROWS:
                 print(f"{region:12s} {freq:6s} {sup.height:>5d}  (insufficient history for the seasonal lag)")
                 continue
