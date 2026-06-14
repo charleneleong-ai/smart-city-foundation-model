@@ -26,6 +26,8 @@ LONDON_SMART_METERS_URL = (
 )
 # AEMO NEM regional demand (real AU load, MW) — public monthly CSV per region (NSW1, VIC1, ...)
 AEMO_URL = "https://aemo.com.au/aemo/data/nem/priceanddemand/PRICE_AND_DEMAND_{ym}_{region}.csv"
+# Electricity Maps total load (real demand, MW) — ~200 zones globally; free endpoint = last 24 h
+ELECTRICITY_MAPS_URL = "https://api.electricitymaps.com/v4/total-load/history"
 
 
 def _fleet(cells: list[str], res: int, population: dict[str, float] | None) -> dict[str, float]:
@@ -92,6 +94,26 @@ def aemo_to_long(raw: pl.DataFrame, *, cell: str, start: datetime, end: datetime
         )
         .group_by("time")
         .agg(pl.col("value").mean())
+        .filter((pl.col("time") >= start) & (pl.col("time") <= end))
+        .with_columns(pl.lit(cell).alias("cell"), pl.lit("load").alias("layer"))
+        .select("cell", "time", "layer", "value")
+        .sort("time")
+    )
+
+
+def el_maps_to_long(history: list[dict], *, cell: str, start: datetime, end: datetime) -> pl.DataFrame:
+    """Electricity Maps total-load history (list of {datetime, value MW, …}) → hourly canonical
+    (cell, time, layer, value=MW) on one cell — a single zonal demand series, windowed."""
+    if not history:
+        schema = {"cell": pl.String, "time": pl.Datetime("us", "UTC"), "layer": pl.String, "value": pl.Float64}
+        return pl.DataFrame(schema=schema)  # type: ignore[arg-type]
+    return (
+        pl.DataFrame(history)
+        .select(
+            pl.col("datetime").str.to_datetime("%Y-%m-%dT%H:%M:%S%.fZ")  # ISO with a literal Z -> tz-naive
+            .dt.replace_time_zone("UTC").dt.cast_time_unit("us").alias("time"),
+            pl.col("value").cast(pl.Float64),
+        )
         .filter((pl.col("time") >= start) & (pl.col("time") <= end))
         .with_columns(pl.lit(cell).alias("cell"), pl.lit("load").alias("layer"))
         .select("cell", "time", "layer", "value")
