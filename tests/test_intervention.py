@@ -7,14 +7,17 @@ from sctwin.reason.intervention import (
     Intervention,
     InterventionEnvironment,
     counterfactual,
+    counterfactual_grid,
     effect,
 )
 
 _C = "abc"
 
 
-def _frame(times: list[datetime], values: list[float], *, layer: str) -> pl.DataFrame:
-    return pl.DataFrame({"cell": _C, "time": times, "layer": layer, "value": values})
+def _frame(
+    times: list[datetime], values: list[float], *, layer: str, cell: str = _C
+) -> pl.DataFrame:
+    return pl.DataFrame({"cell": cell, "time": times, "layer": layer, "value": values})
 
 
 def _hours(*hh: int) -> list[datetime]:
@@ -97,6 +100,24 @@ class TestTariff:
 def test_invalid_intervention_rejected(bad):
     with pytest.raises(ValueError):
         Intervention(**{"kind": "retrofit", "cell": _C, "factor": 0.5, **bad})
+
+
+class TestGrid:
+    """Apply one intervention across every cell — the surface the viewer renders a Δ from."""
+
+    def test_applies_to_every_cell(self):
+        xyz_d = _frame(_RETROFIT_TIMES, _LOAD, layer="load", cell="xyz")
+        xyz_w = _frame(_RETROFIT_TIMES, _TEMPS, layer="weather.t2m", cell="xyz")
+        cf = counterfactual_grid(
+            pl.concat([_DEMAND, xyz_d]), pl.concat([_WEATHER, xyz_w]), kind="retrofit", factor=0.5
+        )
+        assert set(cf["cell"].unique().to_list()) == {_C, "xyz"}
+        assert cf.filter(pl.col("cell") == "xyz")["value"].to_list() == [108.0, 104.0, 116.0, 100.0]
+
+    def test_empty_demand_returns_empty(self):
+        assert counterfactual_grid(
+            _DEMAND.clear(), _WEATHER, kind="retrofit", factor=0.5
+        ).is_empty()
 
 
 class TestEnvironment:
