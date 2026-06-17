@@ -96,16 +96,31 @@ def intervention_env(
     )
 
 
+def build_intervention_samples(
+    city: str, date: str, days: int, res: int, *, kind: str, factor: float
+) -> tuple[dict, InterventionEnvironment]:
+    """{prompt, true_delta, scale} columns per per-cell intervention + the environment. The hidden
+    counterfactual Δ is the verifiable target. Pure CPU + no HF deps — used by both training and
+    baseline eval. Returns (columns, environment)."""
+    wx = _weather(city, date, days, res)
+    env = intervention_env(_synth_load(wx, res), wx, kind=kind, factor=factor)
+    records = training_records(env)
+    columns = {
+        "prompt": [r["prompt"] for r in records],
+        "true_delta": [r["true_delta"] for r in records],
+        "scale": [r["scale"] for r in records],
+    }
+    return columns, env
+
+
 def build_intervention_dataset(
     city: str, date: str, days: int, res: int, *, kind: str, factor: float
 ):
-    """Per-cell interventions → (hf_dataset, env). Rows are {prompt, true_delta, scale}; the hidden
-    counterfactual Δ is the verifiable target the reward scores against."""
+    """build_intervention_samples wrapped as a HuggingFace Dataset for TRL. Returns (hf_dataset, env)."""
     from datasets import Dataset
 
-    wx = _weather(city, date, days, res)
-    env = intervention_env(_synth_load(wx, res), wx, kind=kind, factor=factor)
-    return Dataset.from_list(training_records(env)), env
+    columns, env = build_intervention_samples(city, date, days, res, kind=kind, factor=factor)
+    return Dataset.from_dict(columns), env
 
 
 def main(
