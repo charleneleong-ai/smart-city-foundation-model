@@ -101,6 +101,18 @@ def effect(baseline: pl.DataFrame, cf: pl.DataFrame, metric: str) -> float:
     return agg(cf["value"].to_numpy()) - agg(baseline["value"].to_numpy())
 
 
+def counterfactual_grid(
+    demand: pl.DataFrame, weather: pl.DataFrame, *, kind: str, factor: float
+) -> pl.DataFrame:
+    """Apply one intervention to *every* cell in `demand`, returning the stacked counterfactual
+    (cell, time, layer, value) — the grid-wide surface the twin viewer renders a Δ from (demand
+    after − before). `metric` is irrelevant here (the surface is rendered, not scored)."""
+    cells = demand["cell"].unique().to_list()
+    if not cells:
+        return demand  # already empty — avoid pl.concat on an empty iterable
+    return pl.concat(counterfactual(demand, weather, Intervention(kind, c, factor)) for c in cells)
+
+
 @dataclass(frozen=True)
 class InterventionQuestion:
     """Ask the reasoner: what is `intervention`'s effect on the cell's `metric`? The oracle's

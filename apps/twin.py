@@ -22,6 +22,7 @@ from sctwin.demand import ev_charging_load
 from sctwin.forecast.baselines import GBMForecaster
 from sctwin.forecast.features import FEATURE_COLS, build_supervised
 from sctwin.geo import Cell, center_of
+from sctwin.reason.intervention import counterfactual_grid
 from sctwin.registry import Registry
 from sctwin.verify.results import as_layer, verification_frame
 
@@ -44,7 +45,10 @@ def _source() -> LayerAdapter:
 
 
 def _max_cells() -> int:
-    return 8000 if os.environ.get("WEATHER_SOURCE") == "era5" else MAX_CELLS  # ERA5 = one grid request
+    return (
+        8000 if os.environ.get("WEATHER_SOURCE") == "era5" else MAX_CELLS
+    )  # ERA5 = one grid request
+
 
 # output field -> (display name, unit, range mode): zero=[0,max]; sym=[-M,M]; auto
 _ENERGY_LAYERS = [
@@ -68,6 +72,9 @@ _EV_LAYERS = [  # the physical-AI consumable: where/when charging demand lands, 
 ]
 # forecast a future value from calendar + its own lags only (no concurrent / circular features)
 _FORECAST_FEATURES = ["hour", "dow", "month", "y_lag_1", "y_lag_24"]
+_RETROFIT_FACTOR = (
+    0.3  # envelope retrofit: cut 30% of the heating-driven load (the planner's lever)
+)
 
 
 def _resolve(preset: dict, radius: float | None, res: int | None) -> tuple[list, float, int]:
@@ -96,7 +103,10 @@ def _frames(frame: pl.DataFrame, times: list, vmin: float, vmax: float, fmt: str
 
 def _view(preset: dict, zoom: float, res: int) -> dict:
     return {
-        "lat": preset["lat"], "lon": preset["lon"], "zoom": zoom, "pitch": preset.get("pitch", 50.0),
+        "lat": preset["lat"],
+        "lon": preset["lon"],
+        "zoom": zoom,
+        "pitch": preset.get("pitch", 50.0),
         "elevation_scale": 4.0 * h3.average_hexagon_edge_length(res, unit="m"),
     }
 
@@ -113,7 +123,9 @@ def weather_map(name: str, preset: dict, date: str, *, radius=None, res=None) ->
         return {"name": nm, "unit": unit, "frames": _frames(f, hours, vmin, vmax, "%H:%M")}
 
     return {
-        "name": name, "subtitle": f"Open-Meteo · {date} · H3 res {r} · 24 h", **_view(preset, zoom, r),
+        "name": name,
+        "subtitle": f"Open-Meteo · {date} · H3 res {r} · 24 h",
+        **_view(preset, zoom, r),
         "layers": [layer("2m temperature", "°C", wx), layer("heating degrees", "°C", hdd)],
     }
 
@@ -129,7 +141,9 @@ def _synth_load(wx: pl.DataFrame, res: int) -> pl.DataFrame:
         100.0 + 18.0 * math.sin(2 * math.pi * t.hour / 24) + rng.normal(0, noise[c])
         for c, t in zip(rows["cell"], rows["time"], strict=True)
     ]
-    return pl.DataFrame({"cell": rows["cell"], "time": rows["time"], "layer": "load", "value": load})
+    return pl.DataFrame(
+        {"cell": rows["cell"], "time": rows["time"], "layer": "load", "value": load}
+    )
 
 
 def _range(values: pl.Series, mode: str) -> tuple[float, float]:
@@ -148,8 +162,15 @@ def _verify_layers(results: pl.DataFrame, specs: list, group: str) -> list[dict]
     for field, nm, unit, mode in specs:
         fl = as_layer(res_num, field)
         vmin, vmax = _range(fl["value"], mode)
-        out.append({"name": nm, "unit": unit, "group": group, "mode": mode,
-                    "frames": _frames(fl, times, vmin, vmax, "%m-%d %H:%M")})
+        out.append(
+            {
+                "name": nm,
+                "unit": unit,
+                "group": group,
+                "mode": mode,
+                "frames": _frames(fl, times, vmin, vmax, "%m-%d %H:%M"),
+            }
+        )
     return out
 
 
@@ -160,7 +181,9 @@ def unify_ranges(maps: list[dict]) -> None:
     if len(maps) < 2:
         return
     for j, ref in enumerate(maps[0]["layers"]):
-        values = [r["value"] for m in maps for fr in m["layers"][j]["frames"] for r in fr["records"]]
+        values = [
+            r["value"] for m in maps for fr in m["layers"][j]["frames"] for r in fr["records"]
+        ]
         vmin, vmax = _range(pl.Series(values), ref["mode"])
         span = (vmax - vmin) or 1.0
         for m in maps:
@@ -187,30 +210,69 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
 
     def wlayer(nm: str, f: pl.DataFrame) -> dict:
         vmin, vmax = float(f["value"].min()), float(f["value"].max())
-        return {"name": nm, "unit": "°C", "group": "Inputs", "mode": "auto",
-                "frames": _frames(f, hours, vmin, vmax, "%H:%M")}
+        return {
+            "name": nm,
+            "unit": "°C",
+            "group": "Inputs",
+            "mode": "auto",
+            "frames": _frames(f, hours, vmin, vmax, "%H:%M"),
+        }
 
     # Output 1: weather forecast (predict t2m from calendar + its own lags)
-    wres = verification_frame(GBMForecaster(), build_supervised(wx, wx), _FORECAST_FEATURES, alpha=0.1)
+    wres = verification_frame(
+        GBMForecaster(), build_supervised(wx, wx), _FORECAST_FEATURES, alpha=0.1
+    )
     weather_out = _verify_layers(wres, _WEATHER_FC_LAYERS, "Weather forecast")
 
     # Output 2: energy demand forecast (synthetic load from weather features)
-    eres = verification_frame(GBMForecaster(), build_supervised(_synth_load(wx, r), wx), FEATURE_COLS, alpha=0.1)
+    eres = verification_frame(
+        GBMForecaster(), build_supervised(_synth_load(wx, r), wx), FEATURE_COLS, alpha=0.1
+    )
     energy_out = _verify_layers(eres, _ENERGY_LAYERS, "Energy forecast")
 
+    # Output 2b: intervention counterfactual — the Δ a planner acts on, not a forecast. A retrofit
+    # cuts the heating-driven part of load, so the Δ surface is largest in the coldest cells/hours.
+    load1 = _synth_load(day1, r)
+    cf1 = counterfactual_grid(load1, day1, kind="retrofit", factor=_RETROFIT_FACTOR)
+    delta1 = (
+        load1.join(cf1.select("cell", "time", pl.col("value").alias("after")), on=["cell", "time"])
+        .with_columns((pl.col("after") - pl.col("value")).alias("value"))  # Δ = after − before
+        .select("cell", "time", "layer", "value")
+    )
+
+    def ivlayer(nm: str, f: pl.DataFrame, mode: str) -> dict:
+        vmin, vmax = _range(f["value"], mode)
+        return {
+            "name": nm,
+            "unit": "load",
+            "group": "Intervention (retrofit)",
+            "mode": mode,
+            "frames": _frames(f, hours, vmin, vmax, "%H:%M"),
+        }
+
+    intervention_out = [
+        ivlayer("Δ demand (retrofit)", delta1, "sym"),  # diverging: where/when the retrofit bites
+        ivlayer("demand after retrofit", cf1, "zero"),
+    ]
+
     # Output 3: EV-charging demand surface — the physical-AI consumable (fleet routing, depot siting)
-    evres = verification_frame(GBMForecaster(), build_supervised(ev_charging_load(wx, r), wx), FEATURE_COLS, alpha=0.1)
+    evres = verification_frame(
+        GBMForecaster(), build_supervised(ev_charging_load(wx, r), wx), FEATURE_COLS, alpha=0.1
+    )
     ev_out = _verify_layers(evres, _EV_LAYERS, "EV charging")
 
     w_mae, e_mae = float(wres["abs_error"].mean()), float(eres["abs_error"].mean())
+    iv_mean = float(delta1["value"].mean())  # mean load cut by the retrofit (negative)
     return {
         "name": name,
-        "subtitle": f"{start} · forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f}",
+        "subtitle": f"{start} · forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f} · retrofit Δ {iv_mean:.1f}",
         **_view(preset, zoom, r),
         "layers": [
-            wlayer("temperature", day1), wlayer("heating degrees", hdd),
-            *weather_out, *energy_out, *ev_out,
+            wlayer("temperature", day1),
+            wlayer("heating degrees", hdd),
+            *weather_out,
+            *energy_out,
+            *intervention_out,
+            *ev_out,
         ],
     }
-
-
