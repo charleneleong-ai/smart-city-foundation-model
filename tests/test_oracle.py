@@ -3,7 +3,12 @@ import pytest
 
 from sctwin.adapters.demand import LCLTariffAdapter, NEEDRetrofitAdapter
 from sctwin.demand import lcl_group_profile, need_measure_split
-from sctwin.reason.intervention import InterventionEnvironment, measured_question
+from sctwin.reason.intervention import (
+    InterventionEnvironment,
+    did_effect,
+    did_question,
+    measured_question,
+)
 
 # LCL ToU trial: one Std + one ToU household; ToU flattens the 18:00 peak (energy held)
 _LCL = pl.DataFrame(
@@ -100,3 +105,96 @@ def test_adapters_yield_before_after_pairs():
     assert (
         float(pre["value"].mean()) == 5500.0 and float(post["value"].mean()) == 4250.0
     )  # retrofit saving
+
+
+def _vals(vals: list[float]) -> pl.DataFrame:
+    return pl.DataFrame({"value": vals}, schema={"value": pl.Float64})
+
+
+# LCL across the pre (2012, both on standard tariff) and trial (2013) years: ToU cuts its peak, Std flat
+_LCL_2Y = pl.DataFrame(
+    {
+        "stdorToU": ["ToU", "ToU", "Std", "Std"],
+        "DateTime": [
+            "2012-06-01 18:00:00.0000000",
+            "2013-06-01 18:00:00.0000000",
+            "2012-06-01 18:00:00.0000000",
+            "2013-06-01 18:00:00.0000000",
+        ],
+        "value": [5.0, 3.0, 4.0, 4.0],  # ToU 5->3 (cut 2); Std 4->4 (flat)
+    }
+)
+# NEED with a control group + a secular trend the DiD nets out
+_NEED_DID = pl.DataFrame(
+    {
+        "LOFT_FLAG": [1, 1, 0, 0],
+        "Econ2010": [5000.0, 6000.0, 5500.0, 6500.0],  # treated pre / control pre
+        "Econ2013": [
+            4000.0,
+            4500.0,
+            5400.0,
+            6300.0,
+        ],  # treated post (−1250) / control post (−150 trend)
+    }
+)
+
+
+class _StubLCL2Y(LCLTariffAdapter):
+    def _read(self) -> pl.DataFrame:
+        return _LCL_2Y
+
+
+class _StubNEEDDID(NEEDRetrofitAdapter):
+    def _read(self) -> pl.DataFrame:
+        return _NEED_DID
+
+
+class TestDiD:
+    """Difference-in-differences nets out the treated/control baseline gap a plain Δ carries."""
+
+    def test_did_effect_removes_the_selection_bias(self):
+        # treated cut peak 5->3 (true effect -2); control flat 4->4, but the groups differ at baseline
+        tp_pre, tp_post, cp_pre, cp_post = _vals([5.0]), _vals([3.0]), _vals([4.0]), _vals([4.0])
+        assert did_effect(tp_pre, tp_post, cp_pre, cp_post, metric="peak") == pytest.approx(-2.0)
+        # the naive treated−control(post) estimand is biased by the 5-vs-4 selection gap:
+        naive = measured_question("tariff", cp_post, tp_post, cell="c", metric="peak").true_delta
+        assert naive == pytest.approx(-1.0)  # wrong: −1 vs the true −2
+
+    def test_did_question_rejects_an_empty_group(self):
+        with pytest.raises(ValueError, match="empty"):
+            did_question(
+                "tariff",
+                _vals([]),
+                _vals([3.0]),
+                _vals([4.0]),
+                _vals([4.0]),
+                cell="c",
+                metric="peak",
+            )
+
+    def test_did_question_scales_on_the_treated_pre_spread(self):
+        # only treated_pre is multi-valued (std = sqrt(2)); the rest are single -> std None -> 1.0,
+        # so this pins that scale comes from treated_pre specifically, not another group
+        q = did_question(
+            "tariff",
+            _vals([2.0, 4.0]),
+            _vals([1.0]),
+            _vals([9.0]),
+            _vals([9.0]),
+            cell="c",
+            metric="peak",
+        )
+        assert q.scale == pytest.approx(2.0**0.5)
+
+    def test_lcl_did_profiles_feed_a_debiased_question(self):
+        tp_pre, tp_post, cp_pre, cp_post = _StubLCL2Y("x").did_profiles("c")
+        q = did_question("tariff", tp_pre, tp_post, cp_pre, cp_post, cell="c", metric="peak")
+        assert q.intervention.kind == "tariff" and q.true_delta == pytest.approx(
+            -2.0
+        )  # (3-5) - (4-4)
+
+    def test_need_did_split_nets_out_the_secular_trend(self):
+        tp_pre, tp_post, cp_pre, cp_post = _StubNEEDDID("x").did_split("c")
+        q = did_question("retrofit", tp_pre, tp_post, cp_pre, cp_post, cell="c", metric="mean")
+        # (4250 - 5500) - (5850 - 6000) = -1250 - (-150) = -1100 (vs the biased naive post−pre = -1250)
+        assert q.true_delta == pytest.approx(-1100.0)

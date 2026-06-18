@@ -40,15 +40,32 @@ print(env.rollout(lambda question: question.true_delta))               # oracle 
 
 The adapters are box-ready (injectable `_read`), exercised offline via stubbed readers in [`tests/test_oracle.py`](../../tests/test_oracle.py).
 
+## Difference-in-differences (the de-biased estimand)
+
+A plain **treated − control** (tariff) / **post − pre** (retrofit) Δ conflates the intervention with the pre-existing treated/control gap (selection) and the common time trend (weather, economy). [`did_effect`](../../src/sctwin/reason/intervention.py) nets both out:
+
+```
+DiD = (treated_post − treated_pre) − (control_post − control_pre)
+```
+
+[`did_question(kind, treated_pre, treated_post, control_pre, control_post, *, cell, metric)`](../../src/sctwin/reason/intervention.py) builds the question with this de-biased `true_delta`. The adapters produce the four groups:
+
+- **Tariff** — [`LCLTariffAdapter.did_profiles(cell, pre_year=2012, post_year=2013)`](../../src/sctwin/adapters/demand.py): ToU vs Std across the pre-trial and trial years (the dToU prices applied in 2013 only, so both groups are on standard tariffs in 2012 — the DiD baseline).
+- **Retrofit** — [`NEEDRetrofitAdapter.did_split(cell)`](../../src/sctwin/adapters/demand.py): measure-homes vs non-measure homes across the pre/post years.
+
+```python
+tp_pre, tp_post, cp_pre, cp_post = LCLTariffAdapter("data/lcl.csv").did_profiles(cell="<h3>")
+q = did_question("tariff", tp_pre, tp_post, cp_pre, cp_post, cell="<h3>", metric="peak")
+```
+
 ## Caveats (verify before quoting results)
 
 - **LCL schema** — the kWh column name (`KWH/hh (per half hour) `) and the `stdorToU` Std/ToU labels are the published LCL schema; the Datastore page didn't expose column names to the scout, so confirm on download. The repo's existing LCL feed is the Monash/Chronos parquet (consumption-only) — the trial labels come from the Datastore release.
-- **Estimator** — current Δ is a simple **treated − control** (tariff) / **post − pre** (retrofit). A difference-in-differences refinement (control for the pre-trial period / matched controls) is the obvious follow-up and removes sample-composition bias.
 - **NEED granularity** — annual, so it validates the retrofit *magnitude*, not its hourly shape. Column names vary by release (passed as params).
+- **DiD assumption** — parallel trends (treated and control would have moved together absent the intervention). The DiD profiles use each group-year's mean profile (peak = its annual max); a diurnal (half-hour-of-day) aggregation is a finer refinement.
 - **France Hello-Watt** dataset access is unconfirmed (not in the abstract).
 
 ## Follow-ups
 
-- DiD estimator behind `measured_question` (pre-period control).
 - Wire an `--oracle real` path into `apps/eval_reasoner.py` / `apps/train_reasoner.py` (needs the downloaded files; left box-side).
 - CER Ireland (richer tariff arms) once an ISSDA agreement is in place.

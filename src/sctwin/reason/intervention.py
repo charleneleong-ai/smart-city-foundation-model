@@ -198,3 +198,43 @@ def measured_question(
     return InterventionQuestion(
         Intervention(kind, cell, factor, metric), true_delta, _scale_from(baseline)
     )
+
+
+def did_effect(
+    treated_pre: pl.DataFrame,
+    treated_post: pl.DataFrame,
+    control_pre: pl.DataFrame,
+    control_post: pl.DataFrame,
+    *,
+    metric: str,
+) -> float:
+    """Difference-in-differences effect on `metric`: the treated group's change minus the control
+    group's change, (treated_post − treated_pre) − (control_post − control_pre). Nets out the
+    pre-existing treated/control gap (selection) and the common time trend (weather, economy) — the
+    bias a plain treated−control Δ carries."""
+    return effect(treated_pre, treated_post, metric) - effect(control_pre, control_post, metric)
+
+
+def did_question(
+    kind: str,
+    treated_pre: pl.DataFrame,
+    treated_post: pl.DataFrame,
+    control_pre: pl.DataFrame,
+    control_post: pl.DataFrame,
+    *,
+    cell: str,
+    metric: str,
+    factor: float = 1.0,
+) -> InterventionQuestion:
+    """A measured `InterventionQuestion` whose `true_delta` is the *difference-in-differences*
+    effect — the de-biased natural-experiment estimand (vs `measured_question`'s plain
+    treated−control). `scale` is the treated-pre spread."""
+    frames = (treated_pre, treated_post, control_pre, control_post)
+    if any(f.is_empty() for f in frames):
+        raise ValueError(
+            "did_question got an empty group — check the treated/control × pre/post split"
+        )
+    true_delta = did_effect(treated_pre, treated_post, control_pre, control_post, metric=metric)
+    return InterventionQuestion(
+        Intervention(kind, cell, factor, metric), true_delta, _scale_from(treated_pre)
+    )
