@@ -126,12 +126,21 @@ class InterventionQuestion:
 IPolicy = Callable[[InterventionQuestion], float]
 
 
+def _scale_from(frame: pl.DataFrame) -> float:
+    """A load frame's natural spread (its std) — the reward's magnitude scale; 1.0 if constant or
+    empty. `std` is a float at runtime; the polars stub widens it to float | timedelta | None."""
+    std = frame["value"].std()
+    return cast(float, std) if std else 1.0
+
+
 class InterventionEnvironment:
     """The city as a verifiable-reward environment for *interventional* claims. Each question
     poses an intervention; a policy predicts its effect (Δ metric); the reward scores the
     predicted Δ against the counterfactual-oracle Δ via `interventional_reward` (half sign, half
     magnitude). `rollout` returns the policy's mean reward — its RLVR return. This is what makes
     interventional validity, not forecast accuracy, the trained objective."""
+
+    _questions: list[InterventionQuestion]  # set by __init__ (physics) or from_questions (measured)
 
     def __init__(
         self,
@@ -141,15 +150,21 @@ class InterventionEnvironment:
         *,
         scale: float | None = None,
     ) -> None:
-        self._questions: list[InterventionQuestion] = []
+        self._questions = []
         for iv in interventions:
             base = _cell_series(demand, iv.cell)
             true_delta = effect(base, counterfactual(demand, weather, iv), iv.metric)
-            std = base[
-                "value"
-            ].std()  # float at runtime; std stubs widen to float | timedelta | None
-            sc = scale if scale is not None else (cast(float, std) if std else 1.0)
+            sc = scale if scale is not None else _scale_from(base)
             self._questions.append(InterventionQuestion(iv, true_delta, sc))
+
+    @classmethod
+    def from_questions(cls, questions: list[InterventionQuestion]) -> "InterventionEnvironment":
+        """Build from pre-computed questions whose `true_delta` is a *measured* effect (a real
+        natural experiment — e.g. the LCL ToU trial or a NEED retrofit panel via `measured_question`)
+        rather than the physics-proxy counterfactual. Reward/rollout machinery is identical."""
+        env = cls.__new__(cls)
+        env._questions = list(questions)
+        return env
 
     def questions(self) -> list[InterventionQuestion]:
         return self._questions
@@ -160,3 +175,26 @@ class InterventionEnvironment:
     def rollout(self, policy: IPolicy) -> dict[str, float]:
         rewards = [self.reward(q, policy(q)) for q in self._questions]
         return {"mean_reward": sum(rewards) / len(rewards), "n": float(len(rewards))}
+
+
+def measured_question(
+    kind: str,
+    baseline: pl.DataFrame,
+    treated: pl.DataFrame,
+    *,
+    cell: str,
+    metric: str,
+    factor: float = 1.0,
+) -> InterventionQuestion:
+    """An `InterventionQuestion` whose `true_delta` is a *measured* effect from a real before/after
+    natural experiment — the Δ on `metric` between the `treated` and `baseline` load profiles, not a
+    physics proxy. tariff: baseline=control (Std), treated=ToU, metric='peak'. retrofit:
+    baseline=pre, treated=post, metric='mean'. `scale` is the baseline's natural spread."""
+    if baseline.is_empty() or treated.is_empty():
+        raise ValueError(
+            "measured_question got an empty before/after frame — check the group/measure filter"
+        )
+    true_delta = effect(baseline, treated, metric)
+    return InterventionQuestion(
+        Intervention(kind, cell, factor, metric), true_delta, _scale_from(baseline)
+    )
