@@ -31,6 +31,7 @@ from sctwin.demand import (
     el_maps_to_long,
     electricity_to_long,
     entsoe_load_to_long,
+    lcl_diurnal_profile,
     lcl_group_profile,
     london_smart_meters_to_long,
     need_measure_split,
@@ -291,15 +292,17 @@ class LCLTariffAdapter:
     def did_profiles(
         self, cell: str, *, pre_year: int = 2012, post_year: int = 2013
     ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-        """(treated_pre, treated_post, control_pre, control_post) by year — ToU vs Std across the
-        pre-trial and trial years → feed to did_question('tariff', ...). The dToU prices applied in
-        2013 only, so both groups are on standard tariffs in the pre year (the DiD baseline)."""
+        """(treated_pre, treated_post, control_pre, control_post) typical-day profiles by year —
+        ToU vs Std across the pre-trial and trial years → feed to did_question('tariff', ...). The
+        dToU prices applied in 2013 only, so both groups are on standard tariffs in the pre year
+        (the DiD baseline). Diurnal (half-hour-of-day) so the peak is the average day's, not a
+        single noisy half-hour."""
         raw = self._read()
         return (
-            lcl_group_profile(raw, "ToU", cell=cell, year=pre_year),
-            lcl_group_profile(raw, "ToU", cell=cell, year=post_year),
-            lcl_group_profile(raw, "Std", cell=cell, year=pre_year),
-            lcl_group_profile(raw, "Std", cell=cell, year=post_year),
+            lcl_diurnal_profile(raw, "ToU", cell=cell, year=pre_year),
+            lcl_diurnal_profile(raw, "ToU", cell=cell, year=post_year),
+            lcl_diurnal_profile(raw, "Std", cell=cell, year=pre_year),
+            lcl_diurnal_profile(raw, "Std", cell=cell, year=post_year),
         )
 
 
