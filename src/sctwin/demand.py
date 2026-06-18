@@ -235,12 +235,14 @@ def london_smart_meters_to_long(
     return long.with_columns(pl.lit("load").alias("layer")).select("cell", "time", "layer", "value")
 
 
-def lcl_group_profile(raw: pl.DataFrame, group: str, *, cell: str) -> pl.DataFrame:
+def lcl_group_profile(
+    raw: pl.DataFrame, group: str, *, cell: str, year: int | None = None
+) -> pl.DataFrame:
     """Mean half-hourly load across all households in the Low Carbon London ToU-trial `group`
     ('Std' = control, 'ToU' = treated), as canonical (cell, time, layer='load', value=kWh/hh). raw
-    columns: stdorToU, DateTime (string), value (kWh; non-numeric 'Null' readings dropped). The
-    treated−control Δ of these profiles is the measured tariff effect."""
-    return (
+    columns: stdorToU, DateTime (string), value (kWh; non-numeric 'Null' readings dropped). With
+    `year` set, restricts to that calendar year — the pre/post periods for difference-in-differences."""
+    sel = (
         raw.filter(pl.col("stdorToU") == group)
         .select(
             pl.col("DateTime")
@@ -251,7 +253,11 @@ def lcl_group_profile(raw: pl.DataFrame, group: str, *, cell: str) -> pl.DataFra
             pl.col("value").cast(pl.Float64, strict=False),
         )
         .drop_nulls()
-        .group_by("time")
+    )
+    if year is not None:
+        sel = sel.filter(pl.col("time").dt.year() == year)
+    return (
+        sel.group_by("time")
         .agg(pl.col("value").mean())  # mean per-household load at each timestamp
         .with_columns(pl.lit(cell).alias("cell"), pl.lit("load").alias("layer"))
         .select("cell", "time", "layer", "value")
@@ -260,14 +266,14 @@ def lcl_group_profile(raw: pl.DataFrame, group: str, *, cell: str) -> pl.DataFra
 
 
 def need_measure_split(
-    raw: pl.DataFrame, *, measure_col: str, pre_col: str, post_col: str, cell: str
+    raw: pl.DataFrame, *, measure_col: str, pre_col: str, post_col: str, cell: str, flag: int = 1
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Pre- vs post-measure annual consumption for the NEED properties that installed `measure_col`
-    (flag == 1), as a (pre, post) pair of canonical (cell, time, layer='consumption', value=annual
-    kWh) frames — one row per treated property. Column names are passed in because the NEED release
-    schema varies (confirm against the data dictionary). `effect(pre, post, 'mean')` is the measured
-    retrofit Δ (negative = a saving)."""
-    treated = raw.filter(pl.col(measure_col) == 1)
+    """Pre- vs post-measure annual consumption for the NEED properties whose `measure_col` == `flag`
+    (1 = installed the measure / treated; 0 = control), as a (pre, post) pair of canonical (cell,
+    time, layer='consumption', value=annual kWh) frames — one row per property. Column names are
+    passed in because the NEED release schema varies (confirm against the data dictionary).
+    `effect(pre, post, 'mean')` is the measured retrofit Δ (negative = a saving)."""
+    treated = raw.filter(pl.col(measure_col) == flag)
     epoch = (
         pl.lit(datetime(2000, 1, 1)).dt.replace_time_zone("UTC").dt.cast_time_unit("us")
     )  # sentinel: effect() ignores time

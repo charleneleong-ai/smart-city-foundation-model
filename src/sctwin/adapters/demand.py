@@ -288,6 +288,20 @@ class LCLTariffAdapter:
         raw = self._read()
         return lcl_group_profile(raw, "Std", cell=cell), lcl_group_profile(raw, "ToU", cell=cell)
 
+    def did_profiles(
+        self, cell: str, *, pre_year: int = 2012, post_year: int = 2013
+    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+        """(treated_pre, treated_post, control_pre, control_post) by year — ToU vs Std across the
+        pre-trial and trial years → feed to did_question('tariff', ...). The dToU prices applied in
+        2013 only, so both groups are on standard tariffs in the pre year (the DiD baseline)."""
+        raw = self._read()
+        return (
+            lcl_group_profile(raw, "ToU", cell=cell, year=pre_year),
+            lcl_group_profile(raw, "ToU", cell=cell, year=post_year),
+            lcl_group_profile(raw, "Std", cell=cell, year=pre_year),
+            lcl_group_profile(raw, "Std", cell=cell, year=post_year),
+        )
+
 
 class NEEDRetrofitAdapter:
     """Real UK NEED (DESNZ) before/after: pre- vs post-measure annual consumption for properties
@@ -318,6 +332,16 @@ class NEEDRetrofitAdapter:
             post_col=self._post,
             cell=cell,
         )
+
+    def did_split(self, cell: str) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+        """(treated_pre, treated_post, control_pre, control_post) — measure-homes vs non-measure
+        homes across the pre/post years → feed to did_question('retrofit', ...). Nets out the
+        common secular trend between the two years that a plain post−pre would absorb."""
+        raw = self._read()
+        cols = dict(measure_col=self._measure, pre_col=self._pre, post_col=self._post, cell=cell)
+        treated_pre, treated_post = need_measure_split(raw, flag=1, **cols)
+        control_pre, control_post = need_measure_split(raw, flag=0, **cols)
+        return treated_pre, treated_post, control_pre, control_post
 
 
 _ADAPTERS: dict[str, Callable[[], LayerAdapter]] = {
