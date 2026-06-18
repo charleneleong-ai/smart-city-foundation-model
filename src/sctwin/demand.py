@@ -265,6 +265,36 @@ def lcl_group_profile(
     )
 
 
+def lcl_diurnal_profile(
+    raw: pl.DataFrame, group: str, *, cell: str, year: int | None = None
+) -> pl.DataFrame:
+    """Mean load by **half-hour-of-day** for the Low Carbon London `group` (optionally restricted to
+    `year`) — a 48-point *typical-day* profile. This is the right shape for comparing groups/years in
+    difference-in-differences: the peak is the evening maximum of the average day, robust to the
+    single-timestamp noise that an absolute-timestamp annual max picks up. Returns (cell, `hod`,
+    layer='load', value) — `hod` is the half-hour-of-day index (0..47), deliberately not a `time`
+    instant, so a diurnal profile can't be mistaken for / `.dt`-accessed as a canonical series."""
+    sel = (
+        raw.filter(pl.col("stdorToU") == group)
+        .select(
+            # `_t` is a throwaway grouping key — tz-naive/uncast is fine, it's only read for hour/minute/year
+            pl.col("DateTime").str.to_datetime("%Y-%m-%d %H:%M:%S%.f", strict=False).alias("_t"),
+            pl.col("value").cast(pl.Float64, strict=False),
+        )
+        .drop_nulls()
+    )
+    if year is not None:
+        sel = sel.filter(pl.col("_t").dt.year() == year)
+    return (
+        sel.with_columns((pl.col("_t").dt.hour() * 2 + pl.col("_t").dt.minute() // 30).alias("hod"))
+        .group_by("hod")
+        .agg(pl.col("value").mean())  # mean across all days at each half-hour-of-day
+        .with_columns(pl.lit(cell).alias("cell"), pl.lit("load").alias("layer"))
+        .select("cell", "hod", "layer", "value")
+        .sort("hod")
+    )
+
+
 def need_measure_split(
     raw: pl.DataFrame, *, measure_col: str, pre_col: str, post_col: str, cell: str, flag: int = 1
 ) -> tuple[pl.DataFrame, pl.DataFrame]:

@@ -62,10 +62,11 @@ q = did_question("tariff", tp_pre, tp_post, cp_pre, cp_post, cell="<h3>", metric
 
 - **LCL schema** — the kWh column name (`KWH/hh (per half hour) `) and the `stdorToU` Std/ToU labels are the published LCL schema; the Datastore page didn't expose column names to the scout, so confirm on download. The repo's existing LCL feed is the Monash/Chronos parquet (consumption-only) — the trial labels come from the Datastore release.
 - **NEED granularity** — annual, so it validates the retrofit *magnitude*, not its hourly shape. Column names vary by release (passed as params).
-- **DiD assumption** — parallel trends (treated and control would have moved together absent the intervention). The DiD profiles use each group-year's mean profile (peak = its annual max); a diurnal (half-hour-of-day) aggregation is a finer refinement.
+- **DiD assumption** — parallel trends (treated and control would have moved together absent the intervention). The LCL DiD profiles are **diurnal** ([`lcl_diurnal_profile`](../../src/sctwin/demand.py): mean by half-hour-of-day → a typical-day profile, so the peak is the average day's evening max, not a single noisy half-hour).
 - **France Hello-Watt** dataset access is unconfirmed (not in the abstract).
 
 ## Follow-ups
 
 - Wire an `--oracle real` path into `apps/eval_reasoner.py` / `apps/train_reasoner.py` (needs the downloaded files; left box-side).
 - CER Ireland (richer tariff arms) once an ISSDA agreement is in place.
+- A parallel-trends check (compare pre-period treated vs control slopes) to validate the DiD assumption.

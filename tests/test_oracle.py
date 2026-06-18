@@ -2,7 +2,7 @@ import polars as pl
 import pytest
 
 from sctwin.adapters.demand import LCLTariffAdapter, NEEDRetrofitAdapter
-from sctwin.demand import lcl_group_profile, need_measure_split
+from sctwin.demand import lcl_diurnal_profile, lcl_group_profile, need_measure_split
 from sctwin.reason.intervention import (
     InterventionEnvironment,
     did_effect,
@@ -198,3 +198,55 @@ class TestDiD:
         q = did_question("retrofit", tp_pre, tp_post, cp_pre, cp_post, cell="c", metric="mean")
         # (4250 - 5500) - (5850 - 6000) = -1250 - (-150) = -1100 (vs the biased naive post−pre = -1250)
         assert q.true_delta == pytest.approx(-1100.0)
+
+
+# two ToU days at 18:00 (hh-of-day 36) avg to 5; one at 03:00 (hh-of-day 6); over two years for DiD
+_LCL_DIURNAL = pl.DataFrame(
+    {
+        "stdorToU": ["ToU", "ToU", "ToU", "ToU", "Std", "Std"],
+        "DateTime": [
+            "2012-06-01 18:00:00.0000000",
+            "2012-06-02 18:00:00.0000000",  # ToU 2012 18:00 -> mean(6,4)=5
+            "2013-06-01 18:00:00.0000000",
+            "2013-06-02 18:00:00.0000000",  # ToU 2013 18:00 -> mean(2,4)=3 (cut 2)
+            "2012-06-01 18:00:00.0000000",
+            "2013-06-01 18:00:00.0000000",  # Std flat 4->4
+        ],
+        "value": [6.0, 4.0, 2.0, 4.0, 4.0, 4.0],
+    }
+)
+
+
+class TestDiurnal:
+    """Diurnal (half-hour-of-day) profiles average across days into a typical day."""
+
+    def test_profile_averages_across_days_and_buckets_half_hours(self):
+        raw = pl.DataFrame(
+            {
+                "stdorToU": ["ToU", "ToU", "ToU", "ToU"],
+                "DateTime": [
+                    "2012-06-01 18:00:00.0000000",
+                    "2012-06-02 18:00:00.0000000",  # 18:00 -> hod 36, mean(6,4)=5
+                    "2012-06-01 18:30:00.0000000",  # 18:30 -> hod 37 (the minute//30 branch)
+                    "2012-06-01 03:00:00.0000000",  # 03:00 -> hod 6
+                ],
+                "value": [6.0, 4.0, 7.0, 2.0],
+            }
+        )
+        prof = lcl_diurnal_profile(raw, "ToU", cell="c").sort("hod")
+        assert prof["hod"].to_list() == [6, 36, 37]  # incl. the :30 half-hour bucket
+        assert prof["value"].to_list() == [2.0, 5.0, 7.0]
+
+    def test_year_filter_excludes_the_other_year(self):
+        prof = lcl_diurnal_profile(_LCL_DIURNAL, "ToU", cell="c", year=2012)
+        assert prof["value"].to_list() == [
+            5.0
+        ]  # only the two 2012 days (mean 5), not the 2013 rows
+
+    def test_did_uses_typical_day_peaks(self):
+        args = [
+            lcl_diurnal_profile(_LCL_DIURNAL, g, cell="c", year=y)
+            for g, y in (("ToU", 2012), ("ToU", 2013), ("Std", 2012), ("Std", 2013))
+        ]
+        q = did_question("tariff", *args, cell="c", metric="peak")
+        assert q.true_delta == pytest.approx(-2.0)  # (3-5) - (4-4), peaks from averaged days
