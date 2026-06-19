@@ -26,13 +26,14 @@ import polars as pl
 import typer
 
 from sctwin.adapters.cache import CachingAdapter
+from sctwin.adapters.demand import LCLTariffAdapter, NEEDRetrofitAdapter
 from sctwin.adapters.open_meteo import OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.forecast.baselines import GBMForecaster
 from sctwin.forecast.features import FEATURE_COLS, build_supervised
 from sctwin.reason.environment import ReasoningEnvironment
 from sctwin.reason.grpo import make_reward_fn, prompt_for
-from sctwin.reason.intervention import Intervention, InterventionEnvironment
+from sctwin.reason.intervention import Intervention, InterventionEnvironment, did_question
 from sctwin.reason.intervention_policy import make_reward_fn as iv_reward_fn
 from sctwin.reason.intervention_policy import oracle_effect, training_records, zero_effect
 from sctwin.registry import Registry
@@ -96,6 +97,12 @@ def intervention_env(
     )
 
 
+def _intervention_columns(env: InterventionEnvironment) -> dict:
+    """{prompt, true_delta, scale} columns from an env's questions — the shape TRL/eval expect."""
+    records = training_records(env)
+    return {key: [r[key] for r in records] for key in ("prompt", "true_delta", "scale")}
+
+
 def build_intervention_samples(
     city: str, date: str, days: int, res: int, *, kind: str, factor: float
 ) -> tuple[dict, InterventionEnvironment]:
@@ -104,13 +111,7 @@ def build_intervention_samples(
     baseline eval. Returns (columns, environment)."""
     wx = _weather(city, date, days, res)
     env = intervention_env(_synth_load(wx, res), wx, kind=kind, factor=factor)
-    records = training_records(env)
-    columns = {
-        "prompt": [r["prompt"] for r in records],
-        "true_delta": [r["true_delta"] for r in records],
-        "scale": [r["scale"] for r in records],
-    }
-    return columns, env
+    return _intervention_columns(env), env
 
 
 def build_intervention_dataset(
@@ -121,6 +122,31 @@ def build_intervention_dataset(
 
     columns, env = build_intervention_samples(city, date, days, res, kind=kind, factor=factor)
     return Dataset.from_dict(columns), env
+
+
+def build_real_intervention_samples(
+    cell: str,
+    *,
+    tariff: LCLTariffAdapter | None = None,
+    retrofit: NEEDRetrofitAdapter | None = None,
+) -> tuple[dict, InterventionEnvironment]:
+    """Real natural-experiment (difference-in-differences) questions → ({prompt, true_delta, scale},
+    env). `tariff` (LCL dToU trial) scores the peak Δ, `retrofit` (NEED) the annual-mean Δ; their
+    *measured* DiD effect is the verifiable target (vs the physics proxy of build_intervention_samples).
+    Takes adapter instances so it's offline-testable; eval_reasoner builds them from the dataset paths."""
+    questions = []
+    if tariff is not None:
+        questions.append(
+            did_question("tariff", *tariff.did_profiles(cell), cell=cell, metric="peak")
+        )
+    if retrofit is not None:
+        questions.append(
+            did_question("retrofit", *retrofit.did_split(cell), cell=cell, metric="mean")
+        )
+    if not questions:
+        raise ValueError("real oracle needs a tariff and/or retrofit adapter")
+    env = InterventionEnvironment.from_questions(questions)
+    return _intervention_columns(env), env
 
 
 def main(

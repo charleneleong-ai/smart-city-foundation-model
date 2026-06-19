@@ -94,39 +94,20 @@ the intervention run with the forecast-only reward and an SFT control, holding d
 
 ## 5. RQ2 — Real interventional validity via DiD (`§7.3`)
 
-This is the one piece not yet wired into an app (the `--oracle real` flag is an out-of-scope
-follow-up). The script below produces the **measured DiD ground-truth Δ** (no model needed) and the
-floor/ceiling bracket; scoring the trained policy against it is the optional GPU block.
+Now a first-class flag (`--oracle real`): the eval builds tariff + retrofit DiD questions from the
+downloaded datasets, prints the measured DiD ground-truth Δ via the oracle ceiling / no-effect floor,
+and — with `--model` (the trained LoRA dir) — scores the RLVR reasoner against the real target.
 
-```python
-# scripts/real_oracle.py  — run: uv run --extra forecast python scripts/real_oracle.py
-from sctwin.adapters.demand import LCLTariffAdapter, NEEDRetrofitAdapter
-from sctwin.reason.intervention import InterventionEnvironment, did_question
-from sctwin.reason.intervention_policy import oracle_effect, zero_effect
-from sctwin.geo import cell_of
+```bash
+# reference bracket (CPU): the measured DiD targets + floor/ceiling
+uv run --extra forecast python apps/eval_reasoner.py --city london --task intervention --oracle real \
+    --lcl-source data/lcl.csv --need-source data/need.csv \
+    --need-cols LOFT_FLAG,Econ2010,Econ2013   # match the NEED data dictionary
 
-cell = cell_of(51.5, -0.12, 7).h3  # a London label cell (LCL profiles aggregate all households)
-
-# tariff: ToU vs Std across the pre-trial (2012) and trial (2013) years, diurnal typical-day peak
-tp = LCLTariffAdapter("data/lcl.csv").did_profiles(cell)
-q_tariff = did_question("tariff", *tp, cell=cell, metric="peak")
-
-# retrofit: measure vs non-measure homes, pre/post annual mean (set cols to the NEED dictionary)
-need = NEEDRetrofitAdapter("data/need.csv", measure_col="LOFT_FLAG", pre_col="Econ2010", post_col="Econ2013")
-q_retro = did_question("retrofit", *need.did_split(cell), cell=cell, metric="mean")
-
-env = InterventionEnvironment.from_questions([q_tariff, q_retro])
-print("measured DiD Δ — tariff peak:", q_tariff.true_delta, " retrofit annual:", q_retro.true_delta)
-print("no-effect floor:", env.rollout(zero_effect)["mean_reward"])
-print("oracle ceiling :", env.rollout(oracle_effect)["mean_reward"])  # ~1.0 by construction
-
-# --- optional (GPU): score the trained reasoner against the real DiD targets ---
-# from unsloth import FastLanguageModel
-# from vllm import SamplingParams
-# from sctwin.reason.intervention_policy import llm_policy
-# llm, _ = FastLanguageModel.from_pretrained("outputs/reasoner-intervention-london-gspo", fast_inference=True)
-# gen = lambda p: llm.fast_generate([p], sampling_params=SamplingParams(temperature=0.0, max_tokens=512))[0].outputs[0].text
-# print("RLVR reasoner reward:", env.rollout(llm_policy(gen))["mean_reward"])
+# + the RLVR reasoner row (GPU): point --model at the trained adapter dir from step 4
+uv run --extra forecast python apps/eval_reasoner.py --city london --task intervention --oracle real \
+    --lcl-source data/lcl.csv --need-source data/need.csv \
+    --model outputs/reasoner-intervention-london-gspo
 ```
 
 ## 6. RQ3 — Conformal coverage (`§7.4`)
