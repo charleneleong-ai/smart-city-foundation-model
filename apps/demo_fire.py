@@ -213,7 +213,7 @@ def main(
     radius: Annotated[float | None, typer.Option(help="km around the preset centre")] = 8.0,
     res: Annotated[int | None, typer.Option(help="H3 resolution override (0..15)")] = None,
     steps: Annotated[int, typer.Option(help="CA spread steps to roll out")] = 20,
-    spread: Annotated[float, typer.Option(help="0..1 front threshold (lower = wider fan)")] = 0.5,
+    spread: Annotated[float, typer.Option(help="0..1 front threshold (lower = wider fan; 0.25 ≈ Palisades-scale)")] = 0.25,
     source: Annotated[str, typer.Option(help="open-meteo (archive) or open-meteo-forecast")] = "open-meteo",
     seed_lat: Annotated[float | None, typer.Option(help="ignition latitude (default: preset centre)")] = None,
     seed_lon: Annotated[float | None, typer.Option(help="ignition longitude")] = None,
