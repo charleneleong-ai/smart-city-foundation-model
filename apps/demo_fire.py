@@ -64,7 +64,13 @@ def _peak_hour(wx: pl.DataFrame, times: list[datetime]) -> datetime:
 
 
 def spread_from_weather(
-    wx: pl.DataFrame, seed_cell: str, *, steps: int = 20, spread_fraction: float = 0.5
+    wx: pl.DataFrame,
+    seed_cell: str,
+    *,
+    steps: int = 20,
+    spread_fraction: float = 0.5,
+    elevation: dict[str, float] | None = None,
+    slope_coeff: float = 0.0,
 ) -> tuple[dict[str, int], dict]:
     """Peak fire-weather hour -> dryness field + mean wind -> normalised wind-driven CA spread
     from `seed_cell`. Returns (arrival_step_by_cell, meta) — the core the demo renders and the
@@ -83,6 +89,7 @@ def spread_from_weather(
     arrival = simulate(
         {seed_cell}, dryness, wind_from, steps,
         wind_speed=wind_speed, base_rate=base_rate, threshold=spread_fraction,
+        elevation=elevation, slope_coeff=slope_coeff,
     )
     return arrival, {"at": at, "wind_from": wind_from, "wind_speed": wind_speed, "dryness": dryness}
 
