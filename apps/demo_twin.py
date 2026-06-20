@@ -9,6 +9,8 @@ the Layer dropdown picks a field, the radius slider filters, Play steps through 
 import calendar
 import json
 import os
+from collections import Counter
+from datetime import date as _date
 from pathlib import Path
 from typing import Annotated
 
@@ -29,13 +31,27 @@ def _years(date: str, years: str | None) -> list[int]:
     return [int(y) for y in years.split(",")]
 
 
-def _sample_dates(date: str, months: str | None, day: int, years: list[int]) -> list[str]:
+def _sample_dates(
+    date: str, months: str | None, day: int, years: list[int], *, today: str | None = None
+) -> list[str]:
     """The single --date, or one YYYY-MM-DD per (year, month) — year-major — for the requested
-    months ('all' or e.g. '1,4,7,10'), clamping the day to each month's length."""
+    months ('all' or e.g. '1,4,7,10'), clamping the day to each month's length and dropping any
+    sample later than `today` (so a 'last N years from now' span omits future, data-less months)."""
     if not months or months.lower() == "none":
         return [date]
     nums = range(1, 13) if months == "all" else [int(n) for n in months.split(",")]
-    return [f"{y}-{m:02d}-{min(day, calendar.monthrange(y, m)[1]):02d}" for y in years for m in nums]
+    cutoff = today or _date.today().isoformat()
+    sampled = [f"{y}-{m:02d}-{min(day, calendar.monthrange(y, m)[1]):02d}" for y in years for m in nums]
+    return [d for d in sampled if d <= cutoff]
+
+
+def _grid_stride(dates: list[str], years: list[int]) -> int | None:
+    """Months-per-year if the year×month grid is rectangular (>1 year, equal months each) — drives the
+    year sub-picker. None when single-year or ragged (e.g. a partial current year) → flat Month axis."""
+    if len(years) <= 1:
+        return None
+    per_year = set(Counter(d[:4] for d in dates).values())
+    return next(iter(per_year)) if len(per_year) == 1 else None
 
 _ABOUT = (
     "City digital twin. The Month dropdown samples the 1st of each month (loaded on demand); "
@@ -75,8 +91,9 @@ def main(
     year_nums = _years(date, years)
     dates = _sample_dates(date, months, day, year_nums)
     multi = len(dates) > 1
-    multiyear = multi and len(year_nums) > 1
-    stride = len(dates) // len(year_nums) if multi else 1  # months per year (year-major flat list)
+    grid_stride = _grid_stride(dates, year_nums)  # months/year if rectangular, else None (flat axis)
+    multiyear = multi and grid_stride is not None
+    stride = grid_stride or 1  # year sub-picker stride; 1 = single flat Month axis
 
     def _name(d: str) -> str:
         if not multi:
