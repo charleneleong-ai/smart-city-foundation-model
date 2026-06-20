@@ -94,6 +94,26 @@ def spread_from_weather(
     return arrival, {"at": at, "wind_from": wind_from, "wind_speed": wind_speed, "dryness": dryness}
 
 
+def _spread_frames(cells: list[str], arrival: dict[str, int], n_steps: int, at: datetime) -> list[dict]:
+    """One frame per CA step so the time slider animates the burn front: at step `s` each cell is
+    the bright active front (arrival == s), a dimmer cooling scar (arrival < s), or unburned (0.0).
+    Every frame carries all cells in the same order so the viewer's index-aligned colouring holds."""
+    frames = []
+    for s in range(n_steps + 1):
+        values = []
+        for c in cells:
+            a = arrival.get(c)
+            if a is None or a > s:
+                values.append(0.0)  # not yet reached
+            elif a == s:
+                values.append(1.0)  # active front
+            else:
+                values.append(0.35)  # burn scar, cooling behind the front
+        df = pl.DataFrame({"cell": cells, "time": [at] * len(cells), "layer": "v", "value": values})
+        frames.append({"label": f"step {s}/{n_steps}", "records": h3_layer_records(df, at=at, vmin=0.0, vmax=1.0)})
+    return frames
+
+
 def build_fire_map(
     name: str,
     wx: pl.DataFrame,
@@ -126,6 +146,8 @@ def build_fire_map(
         "layers": [
             single("fuel dryness", "0..1", dryness, 1.0),
             single("fire arrival", "CA step", {c: float(s) for c, s in arrival.items()}, float(n_steps or 1)),
+            {"name": "fire spread", "unit": "CA step",
+             "frames": _spread_frames(list(dryness), arrival, n_steps, at)},  # animated burn front (slider)
         ],
     }
 

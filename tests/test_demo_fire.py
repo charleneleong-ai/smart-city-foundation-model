@@ -28,7 +28,7 @@ def test_build_fire_map_emits_dryness_and_arrival_layers_and_spreads():
     at = datetime(2025, 1, 7, 18, tzinfo=timezone.utc)
     m = build_fire_map("LA", _frame(at), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=3)
 
-    assert [layer["name"] for layer in m["layers"]] == ["fuel dryness", "fire arrival"]
+    assert [layer["name"] for layer in m["layers"]] == ["fuel dryness", "fire arrival", "fire spread"]
     dry = m["layers"][0]["frames"][0]["records"]
     burned = {r["cell"] for r in m["layers"][1]["frames"][0]["records"]}
     assert len(dry) == len(DISK)  # dryness over every fetched cell
@@ -40,3 +40,22 @@ def test_build_fire_map_does_not_spread_when_soaked():
     m = build_fire_map("LA", _frame(at, precip=20.0), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=3)
     burned = {r["cell"] for r in m["layers"][1]["frames"][0]["records"]}
     assert burned == {SEED}  # drenched fuel -> only the seed burns, no spread
+
+
+def test_spread_frames_animate_growing_front_and_scar():
+    from demo_fire import _spread_frames
+
+    at = datetime(2025, 1, 7, tzinfo=timezone.utc)
+    arrival = {"a": 0, "b": 1, "c": 2}  # ignite at steps 0, 1, 2
+    cells = ["a", "b", "c", "d"]  # "d" never burns
+    frames = _spread_frames(cells, arrival, n_steps=2, at=at)
+
+    assert [f["label"] for f in frames] == ["step 0/2", "step 1/2", "step 2/2"]
+    # burned area is monotone non-decreasing and strictly grows end-to-end
+    burned = [sum(1 for r in f["records"] if r["value"] > 0.0) for f in frames]
+    assert burned == sorted(burned) and burned[-1] > burned[0]
+
+    by_step = [{r["cell"]: r["value"] for r in f["records"]} for f in frames]
+    assert by_step[0]["a"] == 1.0  # active front at its ignition step
+    assert by_step[1]["a"] == 0.35  # cooling scar one step later
+    assert all(step["d"] == 0.0 for step in by_step)  # never-burned cell stays unlit
