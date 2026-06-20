@@ -153,6 +153,27 @@ def _crew_frames(base: list[dict], seed: tuple[float, float], arrival: dict[str,
     return frames
 
 
+def crew_overlay(
+    wx: pl.DataFrame, seed_cell: str, arrival: dict[str, int], at: datetime,
+    wind_from: float, wind_speed: float, roster: Roster, n_steps: int, *,
+    constraints: Constraints | None = None,
+) -> dict:
+    """A personalised firefighter deployment over a fire, ready to merge onto a map dict:
+    `{"plan": ...}` (static crew markers + roster panel) and `{"plan_frames": ...}` (per-CA-step
+    positions that advance with the front). Scored against this fire's own peak-hour wind/heat.
+    `n_steps` is the layer's frame count − 1, passed in so the crew frames stay index-aligned with
+    whatever animated layer they overlay."""
+    temps = _at(wx, at, "t2m")
+    scenario = FireScenario(
+        cell=seed_cell, fire_type="grass", size=float(n_steps or 1), pm25=_WILDFIRE_PM25,
+        temp_c=sum(temps) / max(len(temps), 1), wind_speed=wind_speed, wind_dir=wind_from,
+        duration_min=240.0,
+    )
+    plan = deploy(scenario, roster, constraints or Constraints(required_capacity=4.0))
+    base = crew_records(plan, roster, scenario)
+    return {"plan": base, "plan_frames": _crew_frames(base, h3.cell_to_latlng(seed_cell), arrival, n_steps)}
+
+
 def build_fire_map(
     name: str,
     wx: pl.DataFrame,
@@ -201,17 +222,9 @@ def build_fire_map(
             single("fuel dryness", "0..1", dryness, 1.0),
         ],
     }
-    if roster is not None:
-        temps = _at(wx, at, "t2m")
-        scenario = FireScenario(
-            cell=seed_cell, fire_type="grass", size=float(n_steps or 1), pm25=_WILDFIRE_PM25,
-            temp_c=sum(temps) / max(len(temps), 1), wind_speed=wind_speed, wind_dir=wind_from,
-            duration_min=240.0,
-        )
-        plan = deploy(scenario, roster, constraints or Constraints(required_capacity=4.0))
-        base = crew_records(plan, roster, scenario)
-        m["plan"] = base  # static crew markers + roster panel over the fire
-        m["plan_frames"] = _crew_frames(base, h3.cell_to_latlng(seed_cell), arrival, n_steps)  # advance w/ front
+    if roster is not None:  # overlay personalised crew markers + roster panel, advancing with the front
+        m.update(crew_overlay(wx, seed_cell, arrival, at, wind_from, wind_speed, roster, n_steps,
+                              constraints=constraints))
     return m
 
 

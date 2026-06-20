@@ -11,3 +11,6 @@ weather_map.html
 fire_backtest.png
 .cache/
 .era5/
+
+# fetchable burn-perimeter ground truth (see eval_fire.py for the curl)
+*.geojson
