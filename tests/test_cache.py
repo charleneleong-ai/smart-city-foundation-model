@@ -50,3 +50,27 @@ def test_only_missing_cells_are_fetched(tmp_path):
     cad.fetch([a, b], _DAY, _DAY)  # only b is missing
     assert inner.calls == 2
     assert inner.last == [b]  # second inner call requested only the uncached cell
+
+
+class _MultiLayerAdapter:
+    name = "weather"
+
+    def fetch(self, cells, start, end) -> pl.DataFrame:
+        layers = ["t2m", "wind_dir", "precip"]  # >1 row per (cell, time)
+        return pl.DataFrame(
+            {
+                "cell": [c.h3 for c in cells for _ in layers],
+                "time": [start for _ in cells for _ in layers],
+                "layer": [layer for _ in cells for layer in layers],
+                "value": [1.0 for _ in cells for _ in layers],
+            }
+        )
+
+
+def test_cache_preserves_every_layer_per_cell(tmp_path):
+    # regression: dedup must key on (cell, time, layer), not (cell, time), or multi-layer
+    # adapters collapse to a single layer through the cache.
+    cad = CachingAdapter(_MultiLayerAdapter(), tmp_path)
+    cell = cell_of(34.05, -118.24, 8)
+    out = cad.fetch([cell], _DAY, _DAY)  # writes the parquet, then re-reads it
+    assert set(out["layer"].to_list()) == {"t2m", "wind_dir", "precip"}

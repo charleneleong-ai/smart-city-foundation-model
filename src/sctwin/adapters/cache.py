@@ -35,7 +35,7 @@ class CachingAdapter:
         missing = [c for c in cells if any((c.h3, d) not in have for d in days)]
         if missing:
             cached = pl.concat([cached, self._inner.fetch(missing, start, end)]).unique(
-                ["cell", "time"], keep="last"
+                ["cell", "time", "layer"], keep="last"  # multi-layer adapters: 1 row per (cell,time,layer)
             )
             self._path.parent.mkdir(parents=True, exist_ok=True)
             cached.write_parquet(self._path)
