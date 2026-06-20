@@ -43,10 +43,13 @@ def _clamp(x: float, lo: float, hi: float) -> float:
 
 def _target_cell(arrival: dict[str, int], maxstep: int) -> str:
     """A cell the front reaches mid-animation, so the feed shows the calm-then-spike arc a
-    firefighter would actually experience (not the seed, which burns from step 0)."""
+    firefighter would actually experience (not the seed, which burns from step 0). Deterministic:
+    among cells closest to the mid step, the H3 id breaks ties so re-runs pick the same cell."""
     mid = maxstep / 2.0
     reached = {c: s for c, s in arrival.items() if 0 < s <= maxstep}
-    return min(reached, key=lambda c: abs(reached[c] - mid)) if reached else next(iter(arrival))
+    if not reached:
+        return min(arrival)
+    return min(sorted(reached), key=lambda c: abs(reached[c] - mid))
 
 
 def _environment(burned_frac: float, on_fire: bool, *, base_temp: float, wind_kph: float,
