@@ -28,8 +28,7 @@ def toxicant_dose(scenario: FireScenario, time_on_scene_min: float, ppe: str) ->
     return time_on_scene_min * scenario.toxicity() * smoke_factor * PPE_ATTENUATION[ppe]
 
 
-def heat_load(scenario: FireScenario, time_on_scene_min: float, role: str, ppe: str) -> float:
-    """Thermal burden over time. Rises with ambient heat above baseline and role exertion;
-    BA does not relieve heat (turnout retains it), so `ppe` enters only via the staging exemption."""
+def heat_load(scenario: FireScenario, time_on_scene_min: float, role: str) -> float:
+    """Thermal burden over time — rises with ambient heat above baseline and role exertion."""
     over = max(scenario.temp_c - _HEAT_BASE_C, 0.0) / 10.0
     return time_on_scene_min * over * ROLE_EXERTION[role]
