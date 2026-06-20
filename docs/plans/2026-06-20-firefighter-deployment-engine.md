@@ -807,9 +807,356 @@ git commit -m "feat(deploy): realtime FireScenario.from_live via Open-Meteo adap
 
 ---
 
+### Task 8: `viz.py` — Fire-domain payload + per-firefighter markers
+
+**Files:**
+- Create: `src/sctwin/deploy/viz.py`
+- Test: `tests/test_deploy_viz.py`
+
+**Interfaces:**
+- Consumes: `FireScenario` (T1), `Roster`/`Firefighter` (T2), `toxicant_dose` (T3), `Plan` (T5); `h3_layer_records`/`_ramp` from `sctwin.app.render`; `h3`.
+- Produces:
+  - `downwind_alignment(bearing_to_cell_deg, wind_dir_deg) -> float` (1 downwind, 0 upwind/crosswind).
+  - `hazard_surface(scenario, res, rings=2) -> pl.DataFrame` canonical `(cell,time,layer,value)` with layers `smoke`/`heat`/`dose` over the incident's k-ring.
+  - `crew_records(plan, roster, scenario) -> list[dict]` per-firefighter marker records.
+  - `deploy_map(scenario, plan, roster, *, preset, res=8, rings=2) -> dict` the renderer map payload (Fire hex layers + `plan` markers).
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_deploy_viz.py
+from sctwin.deploy.hazard import FireScenario
+from sctwin.deploy.optimise import Constraints, recommend
+from sctwin.deploy.roster import sample_roster
+from sctwin.deploy.viz import crew_records, deploy_map, downwind_alignment, hazard_surface
+
+SCN = FireScenario("8a1fb46622dffff", "grass", 4.0, 120.0, 36.0, 11.0, 70.0, 180.0)
+PRESET = {"name": "Camden", "lat": 51.54, "lon": -0.14, "zoom": 12.5}
+
+
+def test_downwind_alignment_peaks_downwind_zero_upwind():
+    # wind FROM 70° -> smoke travels TOWARD 250°
+    assert downwind_alignment(250.0, 70.0) == 1.0  # straight downwind
+    assert downwind_alignment(70.0, 70.0) == 0.0  # straight upwind, clamped
+
+
+def test_hazard_surface_has_three_layers_and_dose_tracks_smoke():
+    surf = hazard_surface(SCN, res=8, rings=2)
+    assert set(surf["layer"].unique().to_list()) == {"smoke", "heat", "dose"}
+    smoke = surf.filter(surf["layer"] == "smoke").sort("cell")["value"].to_list()
+    dose = surf.filter(surf["layer"] == "dose").sort("cell")["value"].to_list()
+    # dose is monotone in smoke (same per-cell ordering)
+    assert [s for _, s in sorted(zip(smoke, dose))] == sorted(dose)
+
+
+def test_crew_records_cover_every_firefighter_and_carry_risk():
+    roster = sample_roster()
+    plan = recommend(SCN, roster, Constraints(required_capacity=3.0))
+    recs = crew_records(plan, roster, SCN)
+    assert {r["ff_id"] for r in recs} == {f.id for f in roster}
+    assert all("risk" in r and "color" in r and set(r["drivers"]) == {"acute", "incident", "career"} for r in recs)
+    # staging crew are displayed pulled back (north of the incident centre)
+    staging = [r for r in recs if r["role"] == "staging"]
+    assert all(r["lat"] > SCN_lat() for r in staging)
+
+
+def SCN_lat():
+    import h3
+    return h3.cell_to_latlng(SCN.cell)[0]
+
+
+def test_deploy_map_payload_is_render_ready():
+    roster = sample_roster()
+    plan = recommend(SCN, roster, Constraints(required_capacity=3.0))
+    m = deploy_map(SCN, plan, roster, preset=PRESET)
+    assert [L["group"] for L in m["layers"]] == ["Fire", "Fire", "Fire"]
+    assert {r["ff_id"] for r in m["plan"]} == {f.id for f in roster}
+    assert m["lat"] == PRESET["lat"] and "elevation_scale" in m
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run pytest tests/test_deploy_viz.py -q` → Expected: FAIL — `ImportError` (no `viz`).
+
+- [ ] **Step 3: Write minimal implementation**
+
+```python
+# src/sctwin/deploy/viz.py
+import math
+from datetime import datetime, timezone
+
+import h3
+import polars as pl
+
+from sctwin.app.render import _ramp, h3_layer_records
+from sctwin.deploy.exposure import toxicant_dose
+from sctwin.deploy.hazard import FireScenario
+from sctwin.deploy.optimise import Plan
+from sctwin.deploy.roster import Roster
+
+_T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)  # single static frame (incident snapshot)
+_CANON = {"cell": pl.String, "time": pl.Datetime("us", "UTC"), "layer": pl.String, "value": pl.Float64}
+
+
+def downwind_alignment(bearing_to_cell_deg: float, wind_dir_deg: float) -> float:
+    """1.0 if the cell lies straight downwind of the incident, 0.0 upwind/crosswind. Meteorological
+    `wind_dir` is where wind comes FROM, so smoke travels toward `wind_dir + 180`."""
+    smoke_dir = (wind_dir_deg + 180.0) % 360.0
+    return max(math.cos(math.radians(bearing_to_cell_deg - smoke_dir)), 0.0)
+
+
+def _bearing(src: str, dst: str) -> float:
+    slat, slon = (math.radians(x) for x in h3.cell_to_latlng(src))
+    dlat, dlon = (math.radians(x) for x in h3.cell_to_latlng(dst))
+    y = math.sin(dlon - slon) * math.cos(dlat)
+    x = math.cos(slat) * math.sin(dlat) - math.sin(slat) * math.cos(dlat) * math.cos(dlon - slon)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
+def hazard_surface(scenario: FireScenario, res: int, rings: int = 2) -> pl.DataFrame:
+    """smoke / heat / dose per H3 cell over the incident's k-ring — smoke skewed downwind, decaying."""
+    incident = scenario.cell
+    rows: list[dict] = []
+    for c in h3.grid_disk(incident, rings):
+        dist = h3.grid_distance(incident, c)
+        decay = 1.0 / (1.0 + dist)
+        align = 1.0 if c == incident else downwind_alignment(_bearing(incident, c), scenario.wind_dir)
+        smoke = scenario.pm25 * (0.3 + 0.7 * align) * decay
+        heat = scenario.temp_c * decay
+        local = FireScenario(c, scenario.fire_type, scenario.size, smoke, heat,
+                             scenario.wind_speed, scenario.wind_dir, scenario.duration_min)
+        dose = toxicant_dose(local, scenario.duration_min, "standard")
+        rows += [{"cell": c, "time": _T0, "layer": lyr, "value": v}
+                 for lyr, v in (("smoke", smoke), ("heat", heat), ("dose", dose))]
+    return pl.DataFrame(rows, schema=_CANON)
+
+
+def crew_records(plan: Plan, roster: Roster, scenario: FireScenario) -> list[dict]:
+    """One marker per firefighter: position (BA on the incident, staging pulled back north),
+    risk + driver breakdown + a green→red colour relative to the plan's worst individual."""
+    by_id = {f.id: f for f in roster}
+    ilat, ilon = h3.cell_to_latlng(scenario.cell)
+    worst = plan.max_individual_risk or 1.0
+    recs = []
+    for i, a in enumerate(plan.assignments):
+        ff, s = by_id[a.firefighter_id], plan.per_ff_risk[a.firefighter_id]
+        if a.role == "staging":
+            lat, lon = ilat + 0.004, ilon  # display-only offset: held in reserve
+        else:
+            lat, lon = ilat + 0.0006 * math.cos(i), ilon + 0.0006 * math.sin(i)  # jitter on incident
+        recs.append({
+            "ff_id": ff.id, "lon": round(lon, 6), "lat": round(lat, 6),
+            "role": a.role, "ppe": a.ppe, "rotation": a.time_on_scene_min,
+            "age": ff.age, "cardiovascular": ff.cardiovascular, "respiratory": ff.respiratory,
+            "career_dose": ff.career_dose,
+            "risk": round(s.value, 3), "low": round(s.low, 3), "high": round(s.high, 3),
+            "drivers": {k: round(v, 3) for k, v in s.drivers.items()},
+            "color": list(_ramp(s.value / worst)),
+        })
+    return recs
+
+
+def deploy_map(scenario: FireScenario, plan: Plan, roster: Roster, *, preset: dict, res: int = 8, rings: int = 2) -> dict:
+    """Map payload for `to_self_contained_html`: a Fire domain (smoke/heat/dose hexes) + `plan` markers."""
+    surf = hazard_surface(scenario, res, rings)
+
+    def layer(nm: str, lyr: str) -> dict:
+        f = surf.filter(pl.col("layer") == lyr)
+        vmin, vmax = float(f["value"].min()), float(f["value"].max())
+        return {"name": nm, "unit": "", "group": "Fire", "vmin": vmin, "vmax": vmax,
+                "frames": [{"label": "now", "records": h3_layer_records(f, _T0, vmin=vmin, vmax=vmax)}]}
+
+    edge = 4.0 * h3.average_hexagon_edge_length(res, unit="m")
+    return {
+        "name": preset.get("name", "Fire"),
+        "subtitle": f"{scenario.fire_type} · feasible={plan.feasible} · total risk {plan.total_risk:.2f}",
+        "lat": preset["lat"], "lon": preset["lon"], "zoom": preset.get("zoom", 12.5),
+        "pitch": preset.get("pitch", 50.0), "elevation_scale": edge,
+        "layers": [layer("smoke / PM2.5", "smoke"), layer("heat", "heat"), layer("exposure dose", "dose")],
+        "plan": crew_records(plan, roster, scenario),
+    }
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `uv run pytest tests/test_deploy_viz.py -q` → Expected: PASS (4 tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/sctwin/deploy/viz.py tests/test_deploy_viz.py
+git commit -m "feat(deploy): Fire-domain hazard surface + per-firefighter marker payload"
+```
+
+---
+
+### Task 9: renderer wiring (crew markers + roster panel) + demo HTML
+
+**Files:**
+- Modify: `apps/render_3d.py` (pass `plan` through `_js_map`; add a crew `ScatterplotLayer` + roster panel to `_TEMPLATE`)
+- Create: `apps/deploy_twin.py`
+- Test: `tests/test_deploy_twin.py`
+
+**Interfaces:**
+- Consumes: `to_self_contained_html` (`apps/render_3d.py`), `deploy_map` (T8), `deploy`/`sample_roster`/`FireScenario`/`Constraints` (T6/T1/T2/T5).
+- Produces: `apps/deploy_twin.py` writing a self-contained `*.html` whose embedded `plan` drives a risk-coloured crew layer + a roster side panel.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_deploy_twin.py
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def test_demo_writes_html_with_crew_and_roster(tmp_path):
+    out = tmp_path / "fire.html"
+    subprocess.run([sys.executable, "apps/deploy_twin.py", "--out", str(out)], cwd=REPO, check=True)
+    html = out.read_text()
+    assert "FF-01" in html and "FF-06" in html  # crew plan embedded
+    assert "ScatterplotLayer" in html  # crew markers wired into the deck overlay
+    assert 'id="roster"' in html  # roster panel present
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run pytest tests/test_deploy_twin.py -q` → Expected: FAIL — `deploy_twin.py` does not exist (subprocess non-zero exit).
+
+- [ ] **Step 3a: Pass `plan` through the renderer payload**
+
+In `apps/render_3d.py`, in `_js_map`, add `plan` to the returned dict:
+
+```python
+    return {  # distance from the (movable) centre is computed client-side from each cell's "cen"
+        "name": m["name"], "subtitle": m.get("subtitle", ""),
+        "lat": m["lat"], "lon": m["lon"], "zoom": m["zoom"], "pitch": m.get("pitch", 50.0),
+        "elev": m.get("elevation_scale", 900.0),
+        "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
+        "plan": m.get("plan", []),  # per-firefighter deployment markers (empty for non-fire maps)
+    }
+```
+
+- [ ] **Step 3b: Add the crew ScatterplotLayer to the deck overlay**
+
+In `_TEMPLATE`, inside the `overlay.setProps({ layers: [ ... ] })` call (the existing `new deck.PolygonLayer({ id: 'hex', ... })` at ~line 166), append a second layer after the hex layer:
+
+```javascript
+      , new deck.ScatterplotLayer({
+          id: 'crew', data: (M().plan || []),
+          getPosition: d => [d.lon, d.lat], getFillColor: d => d.color,
+          getRadius: d => 12 + 60 * d.risk, radiusUnits: 'meters', radiusMinPixels: 5,
+          stroked: true, getLineColor: [10, 10, 10], lineWidthMinPixels: 1, pickable: true,
+        })
+```
+
+And extend the overlay `getTooltip` to handle a crew point (add before the existing hex branch):
+
+```javascript
+    getTooltip: ({ object }) => object && (object.ff_id ? {
+      html: `<b>${object.ff_id}</b> — age ${object.age}`
+        + (object.cardiovascular ? ' · CV' : '') + (object.respiratory ? ' · resp' : '')
+        + `<br>${object.role.toUpperCase()} · ppe ${object.ppe} · rotate@${object.rotation}min`
+        + `<br>risk <b>${object.risk}</b> [${object.low}, ${object.high}]`
+        + `<br>acute ${object.drivers.acute} · incident ${object.drivers.incident} · career ${object.drivers.career}`,
+      style: { background: '#181818', color: '#eee', fontSize: '12px', padding: '6px' },
+    } : {
+      // ... existing hex tooltip unchanged ...
+```
+
+- [ ] **Step 3c: Add the roster panel + populate it on map select**
+
+In `_TEMPLATE`, add a panel container (near the legend markup):
+
+```html
+  <div id="roster" style="position:absolute;right:10px;top:10px;max-width:320px;background:rgba(20,20,20,.86);
+       color:#eee;font:12px/1.4 system-ui;padding:8px 10px;border-radius:8px;display:none"></div>
+```
+
+Add a `renderRoster()` function and call it from `selectMap` (after `m.layers` are loaded):
+
+```javascript
+  function renderRoster() {
+    const plan = M().plan || [];
+    const el = document.getElementById('roster');
+    if (!plan.length) { el.style.display = 'none'; return; }
+    const rows = [...plan].sort((a, b) => b.risk - a.risk).map(d => {
+      const c = d.color, bar = Math.round(100 * d.risk / Math.max(...plan.map(p => p.risk)));
+      const flags = (d.cardiovascular ? 'CV ' : '') + (d.respiratory ? 'R' : '') || '–';
+      return `<div style="margin:3px 0"><b>${d.ff_id}</b> ${d.age} ${flags}
+        <span style="float:right">${d.role.toUpperCase()} @${d.rotation}m</span><br>
+        <span style="display:inline-block;height:7px;width:${bar}%;background:rgb(${c[0]},${c[1]},${c[2]})"></span>
+        risk ${d.risk} [${d.low}, ${d.high}]</div>`;
+    }).join('');
+    el.innerHTML = `<div style="font-weight:600;margin-bottom:4px">Deployment — ${M().name}</div>${rows}`;
+    el.style.display = 'block';
+  }
+```
+
+Call `renderRoster();` at the end of `selectMap(i)` (after the layer `<select>` is populated).
+
+- [ ] **Step 3d: Write the demo**
+
+```python
+# apps/deploy_twin.py
+"""Render the firefighter deployment engine onto the 3D twin: a Fire domain (smoke/heat/dose
+hexes) plus risk-coloured crew markers and a roster panel. Deterministic — fixed scenario."""
+import argparse
+from pathlib import Path
+
+from render_3d import to_self_contained_html
+
+from sctwin.deploy import Constraints, FireScenario, deploy, sample_roster
+from sctwin.deploy.viz import deploy_map
+
+PRESET = {"name": "Camden", "lat": 51.54, "lon": -0.14, "zoom": 12.5}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default="london_fire_3d.html")
+    args = ap.parse_args()
+
+    scenario = FireScenario(cell="8a1fb46622dffff", fire_type="grass", size=4.0, pm25=120.0,
+                            temp_c=36.0, wind_speed=11.0, wind_dir=70.0, duration_min=180.0)
+    roster = sample_roster()
+    plan = deploy(scenario, roster, Constraints(required_capacity=3.0))
+    m = deploy_map(scenario, plan, roster, preset=PRESET)
+    html = to_self_contained_html([m], title="Firefighter Deployment — Camden grassfire",
+                                  about="Personalised exposure→health deployment. Crew coloured by risk; "
+                                        "hover a firefighter for their score; roster panel top-right.")
+    Path(args.out).write_text(html)
+    print(f"wrote {args.out}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run test + open the result**
+
+Run: `uv run pytest tests/test_deploy_twin.py -q` → Expected: PASS.
+Run: `uv run python apps/deploy_twin.py && open london_fire_3d.html` → Expected: Camden hexes (smoke/heat/dose via the Domain selector), crew dots coloured green→red, staging crew pulled north, hover shows each firefighter's score, roster panel top-right.
+
+Note: if `from render_3d import ...` fails under pytest, add `pythonpath = [".", "apps"]` under `[tool.pytest.ini_options]` in `pyproject.toml` (the subprocess test runs from the repo root so `apps/` is already importable there).
+
+- [ ] **Step 5: Full suite + lint, then commit**
+
+```bash
+uv run pytest -q && uv run ruff check src/sctwin/deploy apps/deploy_twin.py apps/render_3d.py tests/test_deploy_*.py
+git add apps/render_3d.py apps/deploy_twin.py tests/test_deploy_twin.py
+git commit -m "feat(deploy): 3D twin viz — risk-coloured crew markers + roster panel"
+```
+
+---
+
 ## Self-Review
 
-**Spec coverage:** spine (personalised exposure→health scorer) → T3+T4; multi-lever optimiser Plan → T5; combined index (acute+incident+career) → T4; Approach A greedy/grid → T5; suppression-capacity constraint → T5 (`Constraints.required_capacity`, `ROLE_CAPACITY`); varied roster → T2; honest seam / prior band → T4 (`prior_band`, not conformal); realtime hook → T7; demo → T6; out-of-scope (spread, RL, logistics) correctly absent. No gaps.
+**Spec coverage:** spine (personalised exposure→health scorer) → T3+T4; multi-lever optimiser Plan → T5; combined index (acute+incident+career) → T4; Approach A greedy/grid → T5; suppression-capacity constraint → T5 (`Constraints.required_capacity`, `ROLE_CAPACITY`); varied roster → T2; honest seam / prior band → T4 (`prior_band`, not conformal); realtime hook → T7; demo → T6; **visualisation** (Fire-domain smoke/heat/dose hexes + risk-coloured per-firefighter crew markers + roster panel) → T8 (payload, TDD) + T9 (renderer wiring + demo HTML); out-of-scope (fire-spread CA, RL, truck/water logistics) correctly absent. No gaps.
+
+**Viz type consistency:** `deploy_map` (T8) emits the exact payload `to_self_contained_html`/`_js_map` consume (`name`/`lat`/`lon`/`zoom`/`elevation_scale`/`layers[{group,frames:[{label,records}]}]`) plus a `plan` key; T9's `_js_map` passthrough + `ScatterplotLayer` read that same `plan` (`lon`/`lat`/`color`/`risk`/`drivers`). `crew_records` colour uses the shared `_ramp`.
 
 **Type consistency:** `FireScenario` fields and `.toxicity()` consistent T1→T3/T4/T7; `combined_risk(ff, scenario, time_on_scene_min, role, ppe, weights, prior_band)` identical T4→T5; `RiskScore(value, low, high, drivers)` identical T4→T5/T6; `Plan(assignments, total_risk, max_individual_risk, per_ff_risk, feasible)` and `Assignment(firefighter_id, role, ppe, time_on_scene_min)` identical T5→T6; `deploy`/`explain` T6 match `__init__` exports. `from_live` consumes the real `WEATHER_VARS` layer names (`t2m`/`wind_speed`/`wind_dir`) emitted by the committed adapter.
 
