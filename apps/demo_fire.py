@@ -1,0 +1,163 @@
+"""Macro fire-spread demo: pull an LA weather window, derive per-cell fuel dryness, run the
+H3 cellular-automaton spread from an ignition seed, and render the arrival-time surface on
+the 3D twin viewer.
+
+Run: uv run python apps/demo_fire.py --city la --date 2025-01-07 --radius 8 --res 8
+(hits the real Open-Meteo archive API; writes la_fire_3d.html — open it in a browser)
+
+A deliberately-simple MACRO stub, NOT operational fire prediction — see src/sctwin/fire.py.
+"""
+
+import math
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Annotated
+
+import polars as pl
+import typer
+
+from presets import PRESETS, bbox_and_zoom
+from render_3d import to_self_contained_html
+from twin import _view
+
+from sctwin.adapters.cache import CachingAdapter
+from sctwin.adapters.open_meteo import (
+    WEATHER_VARS,
+    OpenMeteoForecastAdapter,
+    OpenMeteoWeatherAdapter,
+)
+from sctwin.app.cells import cells_in_bbox
+from sctwin.app.render import h3_layer_records
+from sctwin.fire import dryness_field, simulate
+from sctwin.geo import cell_of
+
+MAX_CELLS = 1000  # Open-Meteo batches ~100 coords/request and rate-limits by location count
+_ABOUT = (
+    "Macro fire-spread stub. 'Fuel dryness' is a per-cell ignitability proxy from temperature, "
+    "humidity and recent rain; 'fire arrival' is the cellular-automaton burn front from the "
+    "ignition seed, pushed downwind, normalised to the window's mean dryness so the relative "
+    "front shape shows. Colour/height encode the value. NOT an operational fire model — no "
+    "fuel-physics, antecedent-drought memory, ember spotting, or terrain; relative macro front only."
+)
+
+
+def _at(wx: pl.DataFrame, at: datetime, layer: str) -> list[float]:
+    return wx.filter((pl.col("time") == at) & (pl.col("layer") == layer))["value"].to_list()
+
+
+def _circular_mean_deg(degs: list[float]) -> float:
+    """Mean of compass bearings via unit vectors — degrees can't be linearly averaged."""
+    s = sum(math.sin(math.radians(d)) for d in degs)
+    c = sum(math.cos(math.radians(d)) for d in degs)
+    return math.degrees(math.atan2(s, c)) % 360.0
+
+
+def _peak_hour(wx: pl.DataFrame, times: list[datetime]) -> datetime:
+    """The hour with the worst fire weather: highest mean fuel-dryness x mean wind speed."""
+
+    def danger(t: datetime) -> float:
+        dry = dryness_field(wx, t).values()
+        spd = _at(wx, t, "wind_speed")
+        return (sum(dry) / max(len(dry), 1)) * (sum(spd) / max(len(spd), 1))
+
+    return max(times, key=danger)
+
+
+def build_fire_map(
+    name: str,
+    wx: pl.DataFrame,
+    preset: dict,
+    zoom: float,
+    res: int,
+    *,
+    seed_cell: str,
+    steps: int = 20,
+    spread_fraction: float = 0.5,
+) -> dict:
+    """Pick the peak fire-weather hour, derive the dryness field + mean wind, roll the CA out
+    from `seed_cell`, and return a twin `map` with a fuel-dryness and a fire-arrival layer."""
+    times = wx.select(pl.col("time").unique().sort()).to_series().to_list()
+    at = _peak_hour(wx, times)
+    dryness = dryness_field(wx, at)
+    wind_from = _circular_mean_deg(_at(wx, at, "wind_dir"))
+    speeds = _at(wx, at, "wind_speed")
+    wind_speed = sum(speeds) / max(len(speeds), 1)
+    # Normalise spread to the window's own mean fuel-dryness so the WIND-DRIVEN front is visible
+    # regardless of absolute (e.g. winter) magnitude. This shows the *relative* front shape, not
+    # absolute ignition — the instantaneous dryness proxy has no antecedent-drought (FWI) memory.
+    mean_dry = sum(dryness.values()) / max(len(dryness), 1)
+    denom = min(wind_speed / 40.0, 1.0) * mean_dry
+    base_rate = 1.0 / denom if denom > 0 else 0.0  # 0 wind or soaked fuel -> no spread
+    arrival = simulate(
+        {seed_cell}, dryness, wind_from, steps,
+        wind_speed=wind_speed, base_rate=base_rate, threshold=spread_fraction,
+    )
+
+    label = at.strftime("%m-%d %H:%MZ")
+    n_steps = max(arrival.values()) if arrival else 0
+
+    def single(layer_name: str, unit: str, field: dict[str, float], vmax: float) -> dict:
+        df = pl.DataFrame(
+            {"cell": list(field), "time": [at] * len(field), "layer": "v", "value": list(field.values())}
+        )
+        recs = h3_layer_records(df, at=at, vmin=0.0, vmax=vmax) if field else []
+        return {"name": layer_name, "unit": unit, "frames": [{"label": label, "records": recs}]}
+
+    return {
+        "name": name,
+        "subtitle": f"peak {label} · wind from {wind_from:.0f}° @ {wind_speed:.0f} km/h · "
+        f"{len(arrival)}/{len(dryness)} cells burned in {n_steps} steps",
+        **_view(preset, zoom, res),
+        "layers": [
+            single("fuel dryness", "0..1", dryness, 1.0),
+            single("fire arrival", "CA step", {c: float(s) for c, s in arrival.items()}, float(n_steps or 1)),
+        ],
+    }
+
+
+def main(
+    city: Annotated[str, typer.Option(help="preset region (la = Palisades fire)")] = "la",
+    date: Annotated[str, typer.Option(help="YYYY-MM-DD")] = "2025-01-07",
+    radius: Annotated[float | None, typer.Option(help="km around the preset centre")] = 8.0,
+    res: Annotated[int | None, typer.Option(help="H3 resolution override (0..15)")] = None,
+    steps: Annotated[int, typer.Option(help="CA spread steps to roll out")] = 20,
+    spread: Annotated[float, typer.Option(help="0..1 front threshold (lower = wider fan)")] = 0.5,
+    source: Annotated[str, typer.Option(help="open-meteo (archive) or open-meteo-forecast")] = "open-meteo",
+    seed_lat: Annotated[float | None, typer.Option(help="ignition latitude (default: preset centre)")] = None,
+    seed_lon: Annotated[float | None, typer.Option(help="ignition longitude")] = None,
+) -> None:
+    """Pull LA weather, derive fuel dryness, run the macro CA spread, render to 3D HTML."""
+    if city not in PRESETS:
+        raise typer.BadParameter(f"--city must be one of {', '.join(sorted(PRESETS))}")
+    if source not in ("open-meteo", "open-meteo-forecast"):
+        raise typer.BadParameter("--source must be open-meteo or open-meteo-forecast")
+
+    preset = PRESETS[city]
+    south, west, north, east, zoom, r = bbox_and_zoom(preset, radius, res)
+    cells = cells_in_bbox(south, west, north, east, r)
+    if not 0 < len(cells) <= MAX_CELLS:
+        raise SystemExit(f"{len(cells)} cells — keep 1..{MAX_CELLS}; adjust --radius/--res")
+
+    adapter = (
+        OpenMeteoForecastAdapter(variables=WEATHER_VARS)
+        if source == "open-meteo-forecast"
+        else OpenMeteoWeatherAdapter(variables=WEATHER_VARS)
+    )
+    cached = CachingAdapter(adapter, f".cache/{source}-fire")
+    day = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
+    print(f"fetching {len(cells)} cells {date} via {source} (fire-weather vars, cached) ...")
+    wx = cached.fetch(cells, day, day)
+
+    seed = cell_of(seed_lat or preset["lat"], seed_lon or preset["lon"], r).h3
+    m = build_fire_map(
+        f"{city.upper()} macro fire spread", wx, preset, zoom, r,
+        seed_cell=seed, steps=steps, spread_fraction=spread,
+    )
+    html = to_self_contained_html([m], title=f"{city.upper()} — macro fire spread", about=_ABOUT)
+    out = Path(f"{city}_fire_3d.html")
+    out.write_text(html)
+    print(f"wrote {out} — {m['subtitle']}")
+
+
+if __name__ == "__main__":
+    typer.run(main)
