@@ -86,3 +86,12 @@ def test_basemap_satellite_swaps_in_esri_raster():
     assert "World_Imagery" in sat and '"type": "raster"' in sat  # esri imagery raster style
     assert "cartocdn.com" not in sat  # dark vector style replaced
     assert "World_Imagery" not in to_self_contained_html([m])  # default stays dark (cartocdn)
+
+
+def test_categorical_legend_embeds_swatches():
+    m = _map("m", [_layer("t", [_frame("12:00", 4.5)])])
+    m["legend"] = [{"color": [255, 0, 0], "label": "hot"}, {"color": [0, 0, 255], "label": "cold"}]
+    html = to_self_contained_html([m])
+    assert '"label": "hot"' in html  # legend data embedded
+    assert "m.legend" in html and 'class="sw"' in html  # swatch render wired in the viewer
+    assert '"legend": []' in to_self_contained_html([_map("m2", [_layer("t", [_frame("00:00", 1.0)])])])  # default empty

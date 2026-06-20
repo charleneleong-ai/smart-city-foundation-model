@@ -72,9 +72,16 @@ def build_backtest_map(name: str, cells, observed, arrival, meta, sc, *, res: in
     return {
         "name": name,
         "subtitle": f"wind {meta['wind_from']:.0f}° @ {meta['wind_speed']:.0f} km/h · "
-        f"IoU {sc['iou']:.2f} · recall {sc['recall']:.2f} — blue=real burn · hot=hit · magenta=over-reach",
+        f"IoU {sc['iou']:.2f} · recall {sc['recall']:.2f} · {maxstep} steps — press Play",
         "lat": lat, "lon": lon, "zoom": 11.5, "pitch": 55.0,
         "elevation_scale": 6.0 * h3.average_hexagon_edge_length(res, unit="m"),
+        "legend": [  # categorical swatches, shown instead of the gradient bar. Colours mirror _record;
+            # hit is a representative of its yellow->red gradient, unburned is brightened from its faint alpha
+            {"color": [255, 120, 0], "label": "model front — hit"},
+            {"color": [205, 70, 205], "label": "model over-reach"},
+            {"color": [44, 127, 184], "label": "real burn — missed"},
+            {"color": [120, 122, 134], "label": "unburned"},
+        ],
         "layers": [{"name": "fire vs real burn", "unit": "CA step", "vmin": 0.0, "vmax": float(maxstep), "frames": frames}],
     }
 
