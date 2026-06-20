@@ -12,13 +12,32 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"  # real NWP: recent past
 _BATCH = 100  # Open-Meteo accepts many comma-separated coordinates per request
 _RETRIES = 4  # the free tier rate-limits by location count (429) — back off and retry
 
+# canonical layer -> Open-Meteo `hourly` variable. The fire-weather covariates a spread / Fire
+# Weather Index model needs: temperature, 10 m wind speed + direction, precipitation, humidity.
+# NB `wind_dir` is degrees [0, 360) — a circular quantity; consumers must not linearly average it.
+WEATHER_VARS: dict[str, str] = {
+    "t2m": "temperature_2m",
+    "wind_speed": "wind_speed_10m",
+    "wind_dir": "wind_direction_10m",
+    "precip": "precipitation",
+    "rh": "relative_humidity_2m",
+}
+_DEFAULT_VARS: dict[str, str] = {"t2m": "temperature_2m"}
+
 
 class OpenMeteoWeatherAdapter:
-    name = "weather.t2m"
-
-    def __init__(self, client: httpx.Client | None = None, *, url: str = ARCHIVE_URL) -> None:
+    def __init__(
+        self,
+        client: httpx.Client | None = None,
+        *,
+        url: str = ARCHIVE_URL,
+        variables: dict[str, str] | None = None,
+    ) -> None:
         self._client = client or httpx.Client(timeout=60.0)
         self._url = url
+        self._variables = variables or _DEFAULT_VARS
+        # one var -> "weather.<layer>" (back-compat with the t2m-only adapter); many -> "weather"
+        self.name = f"weather.{next(iter(self._variables))}" if len(self._variables) == 1 else "weather"
 
     def fetch(self, cells: list[Cell], start: datetime, end: datetime) -> pl.DataFrame:
         frames = [
@@ -34,7 +53,7 @@ class OpenMeteoWeatherAdapter:
             "longitude": ",".join(f"{lon:.4f}" for _, lon in centers),
             "start_date": start.date().isoformat(),
             "end_date": end.date().isoformat(),
-            "hourly": "temperature_2m",
+            "hourly": ",".join(self._variables.values()),
         }
         for attempt in range(_RETRIES):
             resp = self._client.get(self._url, params=params)
@@ -50,17 +69,22 @@ class OpenMeteoWeatherAdapter:
                 {
                     "cell": cell.h3,
                     "time": pl.Series(r["hourly"]["time"]).str.to_datetime(time_zone="UTC"),
-                    "layer": "t2m",
-                    "value": r["hourly"]["temperature_2m"],
+                    "layer": layer,
+                    # cast to canonical Float64 so a var the API returns as int (e.g. humidity)
+                    # doesn't break the concat against float vars like temperature
+                    "value": pl.Series(r["hourly"][omv], dtype=pl.Float64),
                 }
             )
             for cell, r in zip(cells, results, strict=True)
+            for layer, omv in self._variables.items()
         ]
         return pl.concat(frames)
 
 
-def OpenMeteoForecastAdapter(client: httpx.Client | None = None) -> OpenMeteoWeatherAdapter:
+def OpenMeteoForecastAdapter(
+    client: httpx.Client | None = None, *, variables: dict[str, str] | None = None
+) -> OpenMeteoWeatherAdapter:
     """Open-Meteo *forecast* endpoint — real NWP (recent past + up to 16 days ahead), the
-    future-weather covariate for the demand cascade. Same shape as the archive adapter; only
-    valid for near-now dates (the archive serves arbitrary history)."""
-    return OpenMeteoWeatherAdapter(client, url=FORECAST_URL)
+    future-weather covariate for the demand cascade and the fire-spread model. Same shape as
+    the archive adapter; only valid for near-now dates (the archive serves arbitrary history)."""
+    return OpenMeteoWeatherAdapter(client, url=FORECAST_URL, variables=variables)
