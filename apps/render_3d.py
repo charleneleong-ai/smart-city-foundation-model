@@ -78,6 +78,8 @@ _TEMPLATE = """<!DOCTYPE html>
   <div class="kr"><span><kbd>;</kbd><kbd>&#39;</kbd></span> time</div>
   <div class="kr"><span><kbd>click</kbd></span> move radius centre</div>
 </div>
+<div id="roster" style="position:absolute;right:10px;top:160px;max-width:320px;background:rgba(20,20,20,.86);
+     color:#eee;font:12px/1.4 system-ui;padding:8px 10px;border-radius:8px;display:none"></div>
 <div id="panel">
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
@@ -122,7 +124,14 @@ _TEMPLATE = """<!DOCTYPE html>
   map.addControl(new maplibregl.NavigationControl());
   const overlay = new deck.MapboxOverlay({
     layers: [],
-    getTooltip: ({ object }) => object && {  // show same-group layers for the hovered cell (active bold)
+    getTooltip: ({ object }) => object && (object.ff_id ? {
+      html: `<b>${object.ff_id}</b> — age ${object.age}`
+        + (object.cardiovascular ? ' · CV' : '') + (object.respiratory ? ' · resp' : '')
+        + `<br>${object.role.toUpperCase()} · ppe ${object.ppe} · rotate@${object.rotation}min`
+        + `<br>risk <b>${object.risk}</b> [${object.low}, ${object.high}]`
+        + `<br>acute ${object.drivers.acute} · incident ${object.drivers.incident} · career ${object.drivers.career}`,
+      style: { background: '#181818', color: '#eee', fontSize: '12px', padding: '6px' },
+    } : {  // hex tooltip: show same-group layers for the hovered cell (active bold)
       html: MAPS[mapIdx].layers.map((L, j) => ({ L, j }))
         .filter(({ L }) => L.group === MAPS[mapIdx].layers[layerIdx].group)
         .map(({ L, j }) => {
@@ -130,7 +139,7 @@ _TEMPLATE = """<!DOCTYPE html>
           return j === layerIdx ? `<b>${line}</b>` : line;
         }).join('<br>'),
       style: { background: '#11141c', color: '#e8eaf2', fontSize: '12px', borderRadius: '6px' },
-    },
+    }),
   });
   map.addControl(overlay);
 
@@ -171,6 +180,11 @@ _TEMPLATE = """<!DOCTYPE html>
       onClick: info => { if (info.coordinate) setCenter(info.coordinate); },
       material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
       updateTriggers: { getFillColor: [mapIdx, layerIdx, frame], getElevation: [mapIdx, layerIdx, frame, extruded] },
+    }), new deck.ScatterplotLayer({
+      id: 'crew', data: (M().plan || []),
+      getPosition: d => [d.lon, d.lat], getFillColor: d => d.color,
+      getRadius: d => 12 + 60 * d.risk, radiusUnits: 'meters', radiusMinPixels: 5,
+      stroked: true, getLineColor: [10, 10, 10], lineWidthMinPixels: 1, pickable: true,
     })] });
     document.getElementById('tlabel').textContent = F.label;
     document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';
@@ -178,6 +192,23 @@ _TEMPLATE = """<!DOCTYPE html>
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
   }
   function setFrame(i) { frame = i; slider.value = i; render(); }
+
+  function renderRoster() {
+    const plan = M().plan || [];
+    const el = document.getElementById('roster');
+    if (!plan.length) { el.style.display = 'none'; return; }
+    const maxRisk = Math.max(...plan.map(p => p.risk));
+    const rows = [...plan].sort((a, b) => b.risk - a.risk).map(d => {
+      const c = d.color, bar = Math.round(100 * d.risk / maxRisk);
+      const flags = (d.cardiovascular ? 'CV ' : '') + (d.respiratory ? 'R' : '') || '–';
+      return `<div style="margin:3px 0"><b>${d.ff_id}</b> ${d.age} ${flags}
+        <span style="float:right">${d.role.toUpperCase()} @${d.rotation}m</span><br>
+        <span style="display:inline-block;height:7px;width:${bar}%;background:rgb(${c[0]},${c[1]},${c[2]})"></span>
+        risk ${d.risk} [${d.low}, ${d.high}]</div>`;
+    }).join('');
+    el.innerHTML = `<div style="font-weight:600;margin-bottom:4px">Deployment — ${M().name}</div>${rows}`;
+    el.style.display = 'block';
+  }
 
   async function selectMap(i) {
     mapIdx = i; layerIdx = 0; frame = 0;
@@ -199,6 +230,7 @@ _TEMPLATE = """<!DOCTYPE html>
     visRadius = +radius.max; radius.value = visRadius;
     slider.max = m.layers[0].frames.length - 1; slider.value = 0;
     render();
+    renderRoster();
   }
 
   function selectLayer(i) {
@@ -281,6 +313,7 @@ def _js_map(m: dict) -> dict:
         "lat": m["lat"], "lon": m["lon"], "zoom": m["zoom"], "pitch": m.get("pitch", 50.0),
         "elev": m.get("elevation_scale", 900.0),
         "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
+        "plan": m.get("plan", []),  # per-firefighter deployment markers (empty for non-fire maps)
     }
 
 
