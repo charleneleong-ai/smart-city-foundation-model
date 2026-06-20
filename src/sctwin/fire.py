@@ -2,9 +2,9 @@
 
 NOT an operational fire model: no FARSITE/ELMFIRE fuel physics, ember spotting, or sub-30 m
 resolution. It gives (1) a per-H3-cell fuel-dryness proxy from the weather adapter's layers
-and (2) a wind-driven cellular-automaton spread step, so the twin can roll out a macro
-burned-area / arrival-time surface to backtest against observed Copernicus burned area.
-Slope/terrain is a documented TODO hook (needs a DEM).
+and (2) a wind- and slope-driven cellular-automaton spread step, so the twin can roll out a
+macro burned-area / arrival-time surface to backtest against an observed burn perimeter.
+Slope is optional (pass a per-cell elevation field); without it the step is wind-only.
 """
 
 import math
@@ -12,6 +12,8 @@ from datetime import datetime
 
 import h3
 import polars as pl
+
+from sctwin.geo import haversine_km
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -44,6 +46,22 @@ def wind_factor(bearing_deg: float, wind_from_deg: float) -> float:
     return 0.5 * (1.0 + math.cos(math.radians(bearing_deg - wind_to)))
 
 
+def slope_factor(
+    h_from: str, h_to: str, elevation: dict[str, float] | None, slope_coeff: float
+) -> float:
+    """Terrain multiplier in [0.1, 3.0]: fire spreads faster uphill. 1.0 (neutral) when no
+    elevation field, no coefficient, or either cell's elevation is unknown. `slope_coeff` scales
+    the gradient (rise/run, m per m); positive gradient = uphill = >1."""
+    if not elevation or slope_coeff <= 0:
+        return 1.0
+    e0, e1 = elevation.get(h_from), elevation.get(h_to)
+    if e0 is None or e1 is None:
+        return 1.0
+    dist_m = haversine_km(*h3.cell_to_latlng(h_from), *h3.cell_to_latlng(h_to)) * 1000.0
+    gradient = (e1 - e0) / dist_m if dist_m else 0.0
+    return _clamp(1.0 + slope_coeff * gradient, 0.1, 3.0)
+
+
 def spread_step(
     burning: set[str],
     dryness: dict[str, float],
@@ -53,12 +71,13 @@ def spread_step(
     base_rate: float = 1.0,
     threshold: float = 0.5,
     wind_ref: float = 40.0,
+    elevation: dict[str, float] | None = None,
+    slope_coeff: float = 0.0,
 ) -> set[str]:
     """One macro CA step. Each burning cell tries to ignite its six H3 neighbours; a neighbour
-    ignites when `base_rate * speed_factor * wind_factor * neighbour_dryness > threshold`.
-    Returns the NEWLY ignited cells (already-burning excluded). Pure & deterministic.
-
-    TODO: fold slope into the weight once a DEM layer is wired (uphill spreads faster)."""
+    ignites when `base_rate * speed_factor * wind_factor * slope_factor * neighbour_dryness >
+    threshold`. Returns the NEWLY ignited cells (already-burning excluded). Pure & deterministic.
+    Slope is neutral unless an `elevation` field and a positive `slope_coeff` are supplied."""
     speed_factor = _clamp(wind_speed / wind_ref)
     ignited: set[str] = set()
     for cell in burning:
@@ -66,7 +85,8 @@ def spread_step(
             if nb == cell or nb in burning or nb in ignited:
                 continue
             directional = wind_factor(_bearing(cell, nb), wind_from_deg)
-            weight = base_rate * speed_factor * directional * dryness.get(nb, 0.0)
+            terrain = slope_factor(cell, nb, elevation, slope_coeff)
+            weight = base_rate * speed_factor * directional * terrain * dryness.get(nb, 0.0)
             if weight > threshold:
                 ignited.add(nb)
     return ignited

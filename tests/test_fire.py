@@ -8,6 +8,7 @@ from sctwin.fire import (
     dryness_field,
     fuel_dryness,
     simulate,
+    slope_factor,
     spread_step,
     wind_factor,
 )
@@ -38,6 +39,27 @@ def test_spread_step_prefers_the_downwind_neighbour():
     factor = {n: wind_factor(_bearing(CENTER, n), wind_from) for n in NEIGHBOURS}
     assert max(NEIGHBOURS, key=factor.get) in ignited  # most downwind ignites
     assert min(NEIGHBOURS, key=factor.get) not in ignited  # most upwind does not
+
+
+def test_slope_factor_uphill_boosts_downhill_suppresses():
+    nb = NEIGHBOURS[0]
+    assert slope_factor(CENTER, nb, {CENTER: 100.0, nb: 200.0}, 0.05) > 1.0  # uphill
+    assert slope_factor(CENTER, nb, {CENTER: 200.0, nb: 100.0}, 0.05) < 1.0  # downhill
+    assert slope_factor(CENTER, nb, {CENTER: 100.0, nb: 100.0}, 0.05) == 1.0  # flat
+    assert slope_factor(CENTER, nb, {CENTER: 0.0, nb: 500.0}, 0.0) == 1.0  # no coefficient
+    assert slope_factor(CENTER, nb, None, 0.05) == 1.0  # no elevation field
+    assert slope_factor(CENTER, nb, {CENTER: 0.0, nb: 1e7}, 1.0) == 3.0  # clamped at the top
+
+
+def test_spread_step_slope_extends_uphill_and_limits_downhill():
+    dry = {n: 1.0 for n in NEIGHBOURS}
+    base = spread_step({CENTER}, dry, 0.0, wind_speed=40, threshold=0.5)
+    up = {CENTER: 0.0, **{n: 500.0 for n in NEIGHBOURS}}  # neighbours uphill of the seed
+    down = {CENTER: 500.0, **{n: 0.0 for n in NEIGHBOURS}}  # neighbours downhill
+    more = spread_step({CENTER}, dry, 0.0, wind_speed=40, threshold=0.5, elevation=up, slope_coeff=3.0)
+    less = spread_step({CENTER}, dry, 0.0, wind_speed=40, threshold=0.5, elevation=down, slope_coeff=3.0)
+    assert base < more  # strong uphill ignites extra neighbours
+    assert less < base  # strong downhill suppresses spread
 
 
 def test_spread_step_ignores_wet_and_already_burning_cells():

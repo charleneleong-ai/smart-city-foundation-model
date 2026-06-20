@@ -26,6 +26,7 @@ import typer
 from demo_fire import spread_from_weather
 
 from sctwin.adapters.cache import CachingAdapter
+from sctwin.adapters.elevation import fetch_elevation
 from sctwin.adapters.open_meteo import WEATHER_VARS, OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.geo import cell_of
@@ -58,6 +59,7 @@ def main(
     res: Annotated[int, typer.Option(help="H3 resolution for the join")] = 8,
     steps: Annotated[int, typer.Option(help="CA spread steps")] = 40,
     spread: Annotated[float, typer.Option(help="0..1 front threshold")] = 0.5,
+    slope: Annotated[float, typer.Option(help="uphill-spread coefficient (0 = flat / wind-only)")] = 0.0,
     seed_lat: Annotated[float, typer.Option(help="ignition latitude")] = 34.0725,
     seed_lon: Annotated[float, typer.Option(help="ignition longitude")] = -118.5425,
     margin: Annotated[float, typer.Option(help="km padding around the perimeter bbox")] = 2.0,
@@ -76,11 +78,15 @@ def main(
     print(f"observed burn {len(observed)} cells · fetching {len(cells)} weather cells {date} ...")
     wx = cached.fetch(cells, day, day)
 
+    elevation = fetch_elevation(cells) if slope > 0 else None
     seed = cell_of(seed_lat, seed_lon, res).h3
-    arrival, meta = spread_from_weather(wx, seed, steps=steps, spread_fraction=spread)
+    arrival, meta = spread_from_weather(
+        wx, seed, steps=steps, spread_fraction=spread, elevation=elevation, slope_coeff=slope
+    )
     s = score(set(arrival), observed)
     print(
-        f"seed {seed_lat},{seed_lon} · wind from {meta['wind_from']:.0f}° @ {meta['wind_speed']:.0f} km/h\n"
+        f"seed {seed_lat},{seed_lon} · wind from {meta['wind_from']:.0f}° @ {meta['wind_speed']:.0f} km/h"
+        f" · slope {slope}\n"
         f"predicted {s['predicted']} · observed {s['observed']} · overlap {s['intersection']}\n"
         f"IoU {s['iou']:.2f} · precision {s['precision']:.2f} · recall {s['recall']:.2f} · F1 {s['f1']:.2f}"
     )
