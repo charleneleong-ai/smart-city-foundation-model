@@ -27,7 +27,6 @@ from sctwin.adapters.elevation import fetch_elevation
 from sctwin.adapters.open_meteo import WEATHER_VARS, OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.geo import cell_of
-from sctwin.verify.burn import cells_from_geojson
 
 MAX_CELLS = 1500
 _COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
@@ -70,31 +69,23 @@ def _environment(burned_frac: float, on_fire: bool, *, base_temp: float, wind_kp
     }
 
 
-def main(
-    perimeter: Annotated[Path, typer.Option(help="observed burn perimeter GeoJSON")],
-    out: Annotated[Path, typer.Option(help="output JSON feed")] = Path("../fire-shield-google-ai/src/lib/model-feed.json"),
-    date: Annotated[str, typer.Option(help="YYYY-MM-DD of the fire weather")] = "2025-01-07",
-    res: Annotated[int, typer.Option(help="H3 resolution")] = 8,
-    steps: Annotated[int, typer.Option(help="CA spread steps")] = 40,
-    spread: Annotated[float, typer.Option(help="0..1 front threshold")] = 0.5,
-    seed_lat: Annotated[float, typer.Option(help="ignition latitude")] = 34.0725,
-    seed_lon: Annotated[float, typer.Option(help="ignition longitude")] = -118.5425,
-    margin: Annotated[float, typer.Option(help="km padding around the perimeter bbox")] = 1.2,
-) -> None:
-    """Export a per-CA-step Environment feed for the Fire-Shield app from the macro fire model."""
+def build_feed(
+    perimeter: Path, *, date: str = "2025-01-07", res: int = 8, steps: int = 40,
+    spread: float = 0.5, seed_lat: float = 34.0725, seed_lon: float = -118.5425, margin: float = 1.2,
+) -> dict:
+    """Run the macro fire CA and return the Fire-Shield `EnvData` feed (one frame per CA step at a
+    tracked firefighter cell). Shared by the CLI exporter and the live HTTP server."""
     gj = json.loads(perimeter.read_text())
-    _ = cells_from_geojson(gj, res)
     south, west, north, east = bbox(gj)
     d = margin / 111.0
     cells = cells_in_bbox(south - d, west - d, north + d, east + d, res)
     if not 0 < len(cells) <= MAX_CELLS:
-        raise SystemExit(f"{len(cells)} cells — keep 1..{MAX_CELLS}; raise --res or shrink --margin")
+        raise ValueError(f"{len(cells)} cells — keep 1..{MAX_CELLS}; raise res or shrink margin")
 
     land = {h for h, e in fetch_elevation(cells).items() if e > 0.0}
     cells = [c for c in cells if c.h3 in land]
     cached = CachingAdapter(OpenMeteoWeatherAdapter(variables=WEATHER_VARS), ".cache/open-meteo-fire")
     day = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
-    print(f"fetching {len(cells)} land cells {date} ...")
     wx = cached.fetch(cells, day, day)
     seed = cell_of(seed_lat, seed_lon, res).h3
     arrival, meta = spread_from_weather(wx, seed, steps=steps, spread_fraction=spread)
@@ -102,7 +93,8 @@ def main(
 
     target = _target_cell(arrival, maxstep)
     ring = h3.grid_disk(target, 2)
-    base_temp = (lambda t: sum(t) / max(len(t), 1))(_at(wx, meta["at"], "t2m"))
+    temps = _at(wx, meta["at"], "t2m")
+    base_temp = sum(temps) / max(len(temps), 1)
     wind_from = _compass(meta["wind_from"])
     spread_dir = _compass((meta["wind_from"] + 180.0) % 360.0)  # smoke/fire travels downwind
 
@@ -116,17 +108,34 @@ def main(
         frames.append({"step": s, "env": env})
 
     t_lat, t_lng = h3.cell_to_latlng(target)
-    feed = {
+    return {
         "source": "smart-city-foundation-model · macro Palisades fire CA",
         "generated_for": "fire-shield-google-ai",
         "cell": target, "lat": round(t_lat, 5), "lng": round(t_lng, 5),
         "windFrom": wind_from, "windKph": round(meta["wind_speed"]),
         "steps": maxstep, "frames": frames,
     }
+
+
+def main(
+    perimeter: Annotated[Path, typer.Option(help="observed burn perimeter GeoJSON")],
+    out: Annotated[Path, typer.Option(help="output JSON feed")] = Path("../fire-shield-google-ai/src/lib/model-feed.json"),
+    date: Annotated[str, typer.Option(help="YYYY-MM-DD of the fire weather")] = "2025-01-07",
+    res: Annotated[int, typer.Option(help="H3 resolution")] = 8,
+    steps: Annotated[int, typer.Option(help="CA spread steps")] = 40,
+    spread: Annotated[float, typer.Option(help="0..1 front threshold")] = 0.5,
+    seed_lat: Annotated[float, typer.Option(help="ignition latitude")] = 34.0725,
+    seed_lon: Annotated[float, typer.Option(help="ignition longitude")] = -118.5425,
+    margin: Annotated[float, typer.Option(help="km padding around the perimeter bbox")] = 1.2,
+) -> None:
+    """Export a per-CA-step Environment feed for the Fire-Shield app from the macro fire model."""
+    feed = build_feed(perimeter, date=date, res=res, steps=steps, spread=spread,
+                      seed_lat=seed_lat, seed_lon=seed_lon, margin=margin)
     out.write_text(json.dumps(feed, indent=2))
-    arrival_at = arrival.get(target)
-    print(f"wrote {out} — {len(frames)} frames · target cell front-arrival step "
-          f"{arrival_at}/{maxstep} · wind from {wind_from} @ {round(meta['wind_speed'])} km/h")
+    fr = feed["frames"]
+    arrival_at = next((f["step"] for f in fr if f["env"]["smokeDensity"] > fr[0]["env"]["smokeDensity"] + 10), feed["steps"])
+    print(f"wrote {out} — {len(fr)} frames · target cell {feed['cell']} front-arrival ~step "
+          f"{arrival_at}/{feed['steps']} · wind from {feed['windFrom']} @ {feed['windKph']} km/h")
 
 
 if __name__ == "__main__":
