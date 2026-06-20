@@ -25,6 +25,13 @@ def test_build_backtest_map_animates_steps_and_classifies_cells():
     assert last[ctx][3] < 60  # unburned context -> near-transparent
 
 
+def test_build_backtest_map_carries_a_categorical_legend():
+    m = build_backtest_map("t", [cell_of(34.05, -118.5, 8)], set(), {}, {"wind_from": 0.0, "wind_speed": 0.0}, {"iou": 0.0, "recall": 0.0}, res=8)
+    labels = [e["label"] for e in m["legend"]]
+    assert any("hit" in label for label in labels) and any("over-reach" in label for label in labels)
+    assert all(len(e["color"]) == 3 for e in m["legend"])  # rgb swatches
+
+
 def test_front_grows_monotonically_over_steps():
     cells = [cell_of(34.05 + 0.01 * i, -118.5, 8) for i in range(3)]
     a, b, _ = (c.h3 for c in cells)
