@@ -26,9 +26,11 @@ from sctwin.adapters.cache import CachingAdapter
 from sctwin.adapters.elevation import fetch_elevation
 from sctwin.adapters.open_meteo import WEATHER_VARS, OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
+from sctwin.deploy import Constraints, FireScenario, deploy, sample_roster
 from sctwin.geo import cell_of
 
 MAX_CELLS = 1500
+_WILDFIRE_PM25 = 180.0  # representative heavy wildfire-smoke PM2.5 for the deployment scenario
 _COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
 
@@ -69,19 +71,18 @@ def _environment(burned_frac: float, on_fire: bool, *, base_temp: float, wind_kp
     }
 
 
-def build_feed(
+def run_model(
     perimeter: Path, *, date: str = "2025-01-07", res: int = 8, steps: int = 40,
     spread: float = 0.5, seed_lat: float = 34.0725, seed_lon: float = -118.5425, margin: float = 1.2,
-) -> dict:
-    """Run the macro fire CA and return the Fire-Shield `EnvData` feed (one frame per CA step at a
-    tracked firefighter cell). Shared by the CLI exporter and the live HTTP server."""
+) -> tuple:
+    """Run the macro fire CA over the perimeter's land cells. Returns (arrival, meta, wx, seed) — the
+    expensive part, computed once; per-cell feeds are then derived cheaply by feed_at_cell()."""
     gj = json.loads(perimeter.read_text())
     south, west, north, east = bbox(gj)
     d = margin / 111.0
     cells = cells_in_bbox(south - d, west - d, north + d, east + d, res)
     if not 0 < len(cells) <= MAX_CELLS:
         raise ValueError(f"{len(cells)} cells — keep 1..{MAX_CELLS}; raise res or shrink margin")
-
     land = {h for h, e in fetch_elevation(cells).items() if e > 0.0}
     cells = [c for c in cells if c.h3 in land]
     cached = CachingAdapter(OpenMeteoWeatherAdapter(variables=WEATHER_VARS), ".cache/open-meteo-fire")
@@ -89,24 +90,23 @@ def build_feed(
     wx = cached.fetch(cells, day, day)
     seed = cell_of(seed_lat, seed_lon, res).h3
     arrival, meta = spread_from_weather(wx, seed, steps=steps, spread_fraction=spread)
-    maxstep = max(arrival.values()) if arrival else 0
+    return arrival, meta, wx, seed
 
-    target = _target_cell(arrival, maxstep)
+
+def feed_at_cell(arrival: dict[str, int], meta: dict, wx, target: str) -> dict:
+    """The Fire-Shield `EnvData` feed (one frame per CA step) for a single firefighter cell."""
+    maxstep = max(arrival.values()) if arrival else 0
     ring = h3.grid_disk(target, 2)
     temps = _at(wx, meta["at"], "t2m")
     base_temp = sum(temps) / max(len(temps), 1)
     wind_from = _compass(meta["wind_from"])
     spread_dir = _compass((meta["wind_from"] + 180.0) % 360.0)  # smoke/fire travels downwind
-
     frames = []
     for s in range(maxstep + 1):
         burned = sum(1 for c in ring if arrival.get(c, maxstep + 1) <= s)
-        env = _environment(
-            burned / len(ring), arrival.get(target, maxstep + 1) <= s,
-            base_temp=base_temp, wind_kph=meta["wind_speed"], wind_from=wind_from, spread_dir=spread_dir,
-        )
+        env = _environment(burned / len(ring), arrival.get(target, maxstep + 1) <= s,
+                           base_temp=base_temp, wind_kph=meta["wind_speed"], wind_from=wind_from, spread_dir=spread_dir)
         frames.append({"step": s, "env": env})
-
     t_lat, t_lng = h3.cell_to_latlng(target)
     return {
         "source": "smart-city-foundation-model · macro Palisades fire CA",
@@ -115,6 +115,42 @@ def build_feed(
         "windFrom": wind_from, "windKph": round(meta["wind_speed"]),
         "steps": maxstep, "frames": frames,
     }
+
+
+def build_feed(perimeter: Path, *, target_cell: str | None = None, **model_kw) -> dict:
+    """Run the model and return the EnvData feed at `target_cell` (default: a cell the front reaches
+    mid-animation, giving the calm-then-spike arc)."""
+    arrival, meta, wx, _ = run_model(perimeter, **model_kw)
+    target = target_cell or _target_cell(arrival, max(arrival.values()) if arrival else 0)
+    return feed_at_cell(arrival, meta, wx, target)
+
+
+def build_deployment(perimeter: Path, **model_kw) -> tuple:
+    """Run the model + the deployment engine. Returns (arrival, meta, wx, members): each member is a
+    deployed firefighter placed at a cell along the front (on-task ahead, staging at the rear), so the
+    app can monitor whichever member is selected on the operator map."""
+    arrival, meta, wx, seed = run_model(perimeter, **model_kw)
+    maxstep = max(arrival.values()) if arrival else 0
+    temps = _at(wx, meta["at"], "t2m")
+    scenario = FireScenario(
+        cell=seed, fire_type="grass", size=float(maxstep or 1), pm25=_WILDFIRE_PM25,
+        temp_c=sum(temps) / max(len(temps), 1), wind_speed=meta["wind_speed"],
+        wind_dir=meta["wind_from"], duration_min=240.0,
+    )
+    plan = deploy(scenario, sample_roster(), Constraints(required_capacity=4.0))
+    reached = sorted((c for c, s in arrival.items() if s > 0), key=lambda c: arrival[c])
+    order = ([a for a in plan.assignments if a.role != "staging"] +
+             [a for a in plan.assignments if a.role == "staging"])  # on-task ahead, staging at the rear
+    members = []
+    for i, a in enumerate(order):
+        cell = reached[i * len(reached) // max(len(order), 1)] if reached else seed
+        lat, lng = h3.cell_to_latlng(cell)
+        members.append({
+            "id": a.firefighter_id, "role": a.role, "ppe": a.ppe,
+            "deployRisk": round(plan.per_ff_risk[a.firefighter_id].value, 3),
+            "cell": cell, "lat": round(lat, 5), "lng": round(lng, 5), "arrival": arrival.get(cell),
+        })
+    return arrival, meta, wx, members
 
 
 def main(

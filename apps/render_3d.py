@@ -191,6 +191,12 @@ _TEMPLATE = """<!DOCTYPE html>
       getPosition: d => [d.lon, d.lat], getFillColor: d => d.color,
       getRadius: d => 12 + 60 * d.risk, radiusUnits: 'meters', radiusMinPixels: 5,
       stroked: true, getLineColor: [10, 10, 10], lineWidthMinPixels: 1, pickable: true,
+    }), new deck.TextLayer({
+      // on-map label per deployed firefighter so a specific member is identifiable at a glance
+      id: 'crew-labels', data: ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []),
+      getPosition: d => [d.lon, d.lat], getText: d => String(d.ff_id) + (d.role ? ' \\u00b7 ' + d.role : ''),
+      getColor: [255, 255, 255], getSize: 11, getPixelOffset: [0, -18], fontWeight: 700,
+      background: true, getBackgroundColor: [10, 10, 10, 205], backgroundPadding: [4, 2], pickable: false,
     })] });
     document.getElementById('tlabel').textContent = F.label;
     document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';

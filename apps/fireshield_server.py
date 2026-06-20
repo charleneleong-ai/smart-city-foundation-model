@@ -1,10 +1,12 @@
 """Live HTTP feed server: serves the smart-city fire model's per-step EnvData to the Fire-Shield
-app so the dashboard polls model predictions instead of a regenerated file. Same `build_feed`
-the CLI exporter uses; CORS-open so the app (localhost:3000) can fetch cross-origin.
+app so the dashboard polls model predictions instead of a regenerated file. Runs the deployment
+engine once and places each deployed firefighter at a cell along the front, so the app can monitor
+whichever member is selected on the operator map. CORS-open so the app (localhost:3000) can fetch.
 
-  GET /feed                  -> the cached feed (computed once at startup)
-  GET /feed?spread=0.35      -> recompute with model overrides (spread / seed_lat / seed_lon / date),
-                                so changing the *model* live changes what the app shows
+  GET  /          -> crew control panel (pick a deployed firefighter)
+  GET  /crew      -> the deployed roster (id, role, deploy risk, cell, front-arrival)
+  POST /select?member=FF-03  -> set which member the app monitors
+  GET  /feed      -> the selected member's EnvData feed (+ member info); the app polls this
 
 Run: uv run --extra app python apps/fireshield_server.py --perimeter palisades.geojson --port 8787
 """
@@ -18,16 +20,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from export_fireshield_feed import build_feed
-
-# One-click scenarios for the control panel — each maps to build_feed() overrides.
-PRESETS: dict[str, dict] = {
-    "default": {},
-    "wider front": {"spread": 0.25},
-    "contained": {"spread": 0.7},
-    "north ridge": {"seed_lat": 34.09, "seed_lon": -118.55},
-    "coastal canyon": {"seed_lat": 34.05, "seed_lon": -118.55},
-}
+from export_fireshield_feed import build_deployment, feed_at_cell
 
 
 def create_app(perimeter: Path) -> FastAPI:
@@ -35,39 +28,42 @@ def create_app(perimeter: Path) -> FastAPI:
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"],
     )
-    cache: dict[str, dict] = {}
-    state = {"config": {}}  # the scenario the app pulls when it polls /feed with no params
+    dep: dict = {}            # {arrival, meta, wx, members} — model + deployment, computed once
+    state = {"member": None}  # id of the member the app currently monitors
 
-    def feed_for(config: dict) -> dict:
-        key = repr(sorted(config.items()))
-        if key not in cache:  # compute once per distinct model config, then serve from memory
-            try:
-                cache[key] = build_feed(perimeter, **config)
-            except (ValueError, FileNotFoundError) as e:
-                raise HTTPException(status_code=400, detail=str(e)) from e
-        return cache[key]
+    def deployment() -> dict:
+        if not dep:
+            arrival, meta, wx, members = build_deployment(perimeter)
+            dep.update(arrival=arrival, meta=meta, wx=wx, members=members)
+            mid = (max(arrival.values()) if arrival else 0) / 2.0  # default to a mid-front member
+            state["member"] = min(members, key=lambda m: abs((m["arrival"] or 0) - mid))["id"]
+        return dep
 
-    @app.get("/feed")
-    def feed(
-        spread: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
-        seed_lat: float | None = None,
-        seed_lon: float | None = None,
-        date: str | None = None,
-    ) -> dict:
-        # explicit params = one-off override; otherwise serve the panel-selected scenario
-        overrides = {k: v for k, v in
-                     {"spread": spread, "seed_lat": seed_lat, "seed_lon": seed_lon, "date": date}.items()
-                     if v is not None}
-        return feed_for(overrides or state["config"])
+    def member_feed(m: dict) -> dict:
+        feed = feed_at_cell(dep["arrival"], dep["meta"], dep["wx"], m["cell"])
+        feed["member"] = {k: m[k] for k in ("id", "role", "ppe", "deployRisk", "arrival")}
+        return feed
+
+    @app.get("/crew")
+    def crew() -> dict:
+        d = deployment()
+        keys = ("id", "role", "ppe", "deployRisk", "cell", "arrival")
+        return {"selected": state["member"], "members": [{k: m[k] for k in keys} for m in d["members"]]}
 
     @app.post("/select")
-    def select(preset: Annotated[str, Query()] = "default") -> dict:
-        """Set the scenario the app pulls. The control panel calls this; the app picks it up on its
-        next poll / Refresh."""
-        if preset not in PRESETS:
-            raise HTTPException(status_code=400, detail=f"unknown preset {preset!r}")
-        state["config"] = PRESETS[preset]
-        return {"preset": preset, **feed_for(state["config"])}
+    def select(member: Annotated[str, Query()]) -> dict:
+        d = deployment()
+        m = next((x for x in d["members"] if x["id"] == member), None)
+        if m is None:
+            raise HTTPException(status_code=404, detail=f"no deployed member {member!r}")
+        state["member"] = member
+        return member_feed(m)
+
+    @app.get("/feed")
+    def feed() -> dict:
+        d = deployment()
+        m = next((x for x in d["members"] if x["id"] == state["member"]), d["members"][0])
+        return member_feed(m)
 
     @app.get("/", response_class=HTMLResponse)
     def panel() -> str:
@@ -76,43 +72,46 @@ def create_app(perimeter: Path) -> FastAPI:
     return app
 
 
-_CONTROL_PANEL = """<!doctype html><meta charset=utf-8><title>Fire model → app</title>
-<style>
- body{background:#0f172a;color:#e2e8f0;font:14px/1.5 system-ui;margin:0;padding:2rem;max-width:640px}
- h1{font-size:1.1rem;color:#fb923c}.sub{color:#94a3b8;font-size:.85rem;margin-bottom:1.5rem}
- button{background:#1e293b;border:1px solid #fb923c33;color:#e2e8f0;padding:.6rem 1rem;border-radius:.6rem;
-   font-weight:700;cursor:pointer;margin:.25rem}button:hover{background:#fb923c;color:#0f172a}
- pre{background:#020617;border-radius:.6rem;padding:1rem;font-size:.8rem;overflow:auto;margin-top:1.2rem}
- .live{color:#34d399}
-</style>
-<h1>🔥 Smart-City Fire Model → Fire-Shield app</h1>
-<div class=sub>Pick a scenario to drive the app's environment. The dashboard pulls it on its next
-poll (~5s) or when you hit <b>Refresh from model</b>.</div>
-<div id=btns></div>
-<pre id=out>select a scenario…</pre>
-<script>
- const PRESETS=["default","wider front","contained","north ridge","coastal canyon"];
- const b=document.getElementById("btns"),o=document.getElementById("out");
- PRESETS.forEach(p=>{const x=document.createElement("button");x.textContent=p;
-   x.onclick=async()=>{o.textContent="running model…";
-     const r=await fetch("/select?preset="+encodeURIComponent(p),{method:"POST"});
-     const f=await r.json();const peak=Math.max(...f.frames.map(x=>x.env.temperature));
-     o.innerHTML='<span class=live>● selected: '+f.preset+'</span>\\n'+
-       'cell '+f.cell+' · '+f.steps+' steps · wind '+f.windFrom+' @ '+f.windKph+'km/h\\n'+
-       'peak temp '+peak+'°C · the app will show this on its next poll / Refresh';};
-   b.appendChild(x);});
-</script>
-"""
-
-
 def main(
     perimeter: Annotated[Path, typer.Option(help="observed burn perimeter GeoJSON")] = Path("palisades.geojson"),
     host: Annotated[str, typer.Option(help="bind address")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="port")] = 8787,
 ) -> None:
-    """Serve the live Fire-Shield model feed."""
+    """Serve the live Fire-Shield deployment feed."""
     uvicorn.run(create_app(perimeter), host=host, port=port)
 
 
 if __name__ == "__main__":
     typer.run(main)
+
+
+_CONTROL_PANEL = """<!doctype html><meta charset=utf-8><title>Deployment → app</title>
+<style>
+ body{background:#0f172a;color:#e2e8f0;font:14px/1.5 system-ui;margin:0;padding:2rem;max-width:680px}
+ h1{font-size:1.1rem;color:#fb923c}.sub{color:#94a3b8;font-size:.85rem;margin-bottom:1.2rem}
+ button{display:block;width:100%;text-align:left;background:#1e293b;border:1px solid #fb923c33;color:#e2e8f0;
+   padding:.7rem 1rem;border-radius:.6rem;font-weight:700;cursor:pointer;margin:.4rem 0}
+ button:hover{background:#fb923c;color:#0f172a}button small{font-weight:400;opacity:.8}
+ pre{background:#020617;border-radius:.6rem;padding:1rem;font-size:.8rem;white-space:pre-wrap;margin-top:1.2rem}
+ .live{color:#34d399}
+</style>
+<h1>🚒 Deployed crew → Fire-Shield app</h1>
+<div class=sub>Pick a deployed firefighter (these match the labelled markers on the operator map).
+The app switches to monitor that member's environment on its next poll (~5s) or on <b>Refresh from model</b>.</div>
+<div id=btns>loading deployed crew…</div>
+<pre id=out>select a firefighter…</pre>
+<script>
+ const b=document.getElementById("btns"),o=document.getElementById("out");
+ fetch("/crew").then(r=>r.json()).then(d=>{b.innerHTML="";
+   d.members.forEach(m=>{const x=document.createElement("button");
+     x.innerHTML=m.id+' <small>· '+m.role+' · deploy risk '+m.deployRisk+
+       ' · front-arrival step '+(m.arrival==null?'—':m.arrival)+'</small>';
+     x.onclick=async()=>{o.textContent="selecting "+m.id+"…";
+       const r=await fetch("/select?member="+encodeURIComponent(m.id),{method:"POST"});const f=await r.json();
+       const peak=Math.max(...f.frames.map(x=>x.env.temperature));
+       o.innerHTML='<span class=live>● app now monitoring '+f.member.id+' ('+f.member.role+')</span>\\n'+
+         'cell '+f.cell+' · '+f.steps+' steps · peak '+peak+'°C · deploy risk '+f.member.deployRisk+'\\n'+
+         'the app switches to this member on its next poll (~5s) or hit Refresh from model';};
+     b.appendChild(x);});});
+</script>
+"""
