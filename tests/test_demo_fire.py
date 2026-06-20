@@ -86,6 +86,18 @@ def test_build_fire_map_terrain_slope_changes_the_front():
     assert arrival_steps(flat) != arrival_steps(sloped)  # terrain changes arrival timing/extent
 
 
+def test_build_fire_map_masks_ocean_cells():
+    at = datetime(2025, 1, 7, 18, tzinfo=timezone.utc)
+    water = set(list(DISK)[1::2])  # mark every other cell as sea level
+    water.discard(SEED)  # keep the ignition on land
+    elev = {c: (0.0 if c in water else 100.0) for c in DISK}
+    m = build_fire_map("LA", _frame(at), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=3, elevation=elev)
+
+    rendered = {r["cell"] for layer in m["layers"] for fr in layer["frames"] for r in fr["records"]}
+    assert rendered  # land cells remain in the model
+    assert not (rendered & water)  # no ocean cell appears in any layer
+
+
 def test_spread_frames_animate_growing_front_and_scar():
     from demo_fire import _spread_frames
 

@@ -164,6 +164,9 @@ def build_fire_map(
     With `elevation` + `slope_coeff` the CA is terrain-aware (fire races uphill). If a `roster` is
     given, also overlay a personalised firefighter deployment (crew markers + roster panel) at the
     ignition point, scored against this fire's own wind/heat conditions."""
+    if elevation:  # drop ocean cells (DEM sea level) so fire / dryness stay on land, not the sea
+        land = {h for h, e in elevation.items() if e > 0.0}
+        wx = wx.filter(pl.col("cell").is_in(land))
     arrival, meta = spread_from_weather(wx, seed_cell, steps=steps, spread_fraction=spread_fraction,
                                         elevation=elevation, slope_coeff=slope_coeff)
     at, dryness, wind_from, wind_speed = meta["at"], meta["dryness"], meta["wind_from"], meta["wind_speed"]
@@ -239,7 +242,7 @@ def main(
     print(f"fetching {len(cells)} cells {date} via {source} (fire-weather vars, cached) ...")
     wx = cached.fetch(cells, day, day)
 
-    elevation = fetch_elevation(cells) if slope > 0 else None  # DEM for the terrain-aware slope term
+    elevation = fetch_elevation(cells)  # DEM: masks ocean cells + (slope>0) the terrain slope term
     seed = cell_of(seed_lat or preset["lat"], seed_lon or preset["lon"], r).h3
     m = build_fire_map(
         f"{city.upper()} macro fire spread", wx, preset, zoom, r,
