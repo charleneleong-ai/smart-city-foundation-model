@@ -28,8 +28,8 @@ def test_build_fire_map_emits_dryness_and_arrival_layers_and_spreads():
     at = datetime(2025, 1, 7, 18, tzinfo=timezone.utc)
     m = build_fire_map("LA", _frame(at), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=3)
 
-    assert [layer["name"] for layer in m["layers"]] == ["fuel dryness", "fire arrival", "fire spread"]
-    dry = m["layers"][0]["frames"][0]["records"]
+    assert [layer["name"] for layer in m["layers"]] == ["fire spread", "fire arrival", "fuel dryness"]
+    dry = m["layers"][2]["frames"][0]["records"]
     burned = {r["cell"] for r in m["layers"][1]["frames"][0]["records"]}
     assert len(dry) == len(DISK)  # dryness over every fetched cell
     assert SEED in burned and len(burned) > 1  # seed ignites and the fire spread downwind
@@ -62,7 +62,7 @@ def test_crew_advance_with_the_front_while_staging_holds():
     m = build_fire_map("LA", _frame(at), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=3,
                        roster=roster, constraints=Constraints(required_capacity=3.0))
     pf = m["plan_frames"]
-    assert len(pf) == len(m["layers"][2]["frames"])  # one crew-frame per fire-spread step
+    assert len(pf) == len(m["layers"][0]["frames"])  # one crew-frame per fire-spread step
 
     def pos(frame: list[dict], role: str) -> tuple[float, float]:
         r = next(rec for rec in frame if rec["role"] == role)

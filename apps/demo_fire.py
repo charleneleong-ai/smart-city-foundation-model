@@ -178,10 +178,11 @@ def build_fire_map(
         f"{len(arrival)}/{len(dryness)} cells burned in {n_steps} steps",
         **_view(preset, zoom, res),
         "layers": [
-            single("fuel dryness", "0..1", dryness, 1.0),
-            single("fire arrival", "CA step", {c: float(s) for c, s in arrival.items()}, float(n_steps or 1)),
+            # animated burn front FIRST so the time slider / Play work on load
             {"name": "fire spread", "unit": "CA step",
-             "frames": _spread_frames(list(dryness), arrival, n_steps, at)},  # animated burn front (slider)
+             "frames": _spread_frames(list(dryness), arrival, n_steps, at)},
+            single("fire arrival", "CA step", {c: float(s) for c, s in arrival.items()}, float(n_steps or 1)),
+            single("fuel dryness", "0..1", dryness, 1.0),
         ],
     }
     if roster is not None:
@@ -239,7 +240,8 @@ def main(
         roster=sample_roster() if deploy_crew else None,
     )
     suffix = " + firefighter deployment" if deploy_crew else ""
-    html = to_self_contained_html([m], title=f"{city.upper()} — macro fire spread{suffix}", about=_ABOUT)
+    html = to_self_contained_html([m], title=f"{city.upper()} — macro fire spread{suffix}",
+                                  about=_ABOUT, basemap="satellite")  # Esri satellite/terrain overlay
     out = Path(f"{city}_fire_3d.html")
     out.write_text(html)
     crew = f" · {len(m['plan'])} crew deployed" if "plan" in m else ""
