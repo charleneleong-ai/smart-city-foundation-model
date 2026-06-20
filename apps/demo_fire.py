@@ -27,6 +27,7 @@ from sctwin.adapters.open_meteo import (
     OpenMeteoForecastAdapter,
     OpenMeteoWeatherAdapter,
 )
+from sctwin.adapters.elevation import fetch_elevation
 from sctwin.app.cells import cells_in_bbox
 from sctwin.app.render import h3_layer_records
 from sctwin.deploy import Constraints, FireScenario, deploy, sample_roster
@@ -41,9 +42,9 @@ MAX_CELLS = 1000  # Open-Meteo batches ~100 coords/request and rate-limits by lo
 _ABOUT = (
     "Macro fire-spread stub. 'Fuel dryness' is a per-cell ignitability proxy from temperature, "
     "humidity and recent rain; 'fire arrival' is the cellular-automaton burn front from the "
-    "ignition seed, pushed downwind, normalised to the window's mean dryness so the relative "
-    "front shape shows. Colour/height encode the value. NOT an operational fire model — no "
-    "fuel-physics, antecedent-drought memory, ember spotting, or terrain; relative macro front only."
+    "ignition seed, pushed downwind and uphill (DEM slope term), normalised to the window's mean "
+    "dryness so the relative front shape shows. Colour/height encode the value. NOT an operational "
+    "fire model — no fuel-physics, antecedent-drought memory, or ember spotting; relative macro front only."
 )
 
 
@@ -156,11 +157,15 @@ def build_fire_map(
     spread_fraction: float = 0.5,
     roster: Roster | None = None,
     constraints: Constraints | None = None,
+    elevation: dict[str, float] | None = None,
+    slope_coeff: float = 0.0,
 ) -> dict:
     """Run the spread and wrap it as a twin `map` (fuel-dryness + fire-arrival + animated spread).
-    If a `roster` is given, also overlay a personalised firefighter deployment (crew markers +
-    roster panel) at the ignition point, scored against this fire's own wind/heat conditions."""
-    arrival, meta = spread_from_weather(wx, seed_cell, steps=steps, spread_fraction=spread_fraction)
+    With `elevation` + `slope_coeff` the CA is terrain-aware (fire races uphill). If a `roster` is
+    given, also overlay a personalised firefighter deployment (crew markers + roster panel) at the
+    ignition point, scored against this fire's own wind/heat conditions."""
+    arrival, meta = spread_from_weather(wx, seed_cell, steps=steps, spread_fraction=spread_fraction,
+                                        elevation=elevation, slope_coeff=slope_coeff)
     at, dryness, wind_from, wind_speed = meta["at"], meta["dryness"], meta["wind_from"], meta["wind_speed"]
     label = at.strftime("%m-%d %H:%MZ")
     n_steps = max(arrival.values()) if arrival else 0
@@ -210,6 +215,7 @@ def main(
     seed_lat: Annotated[float | None, typer.Option(help="ignition latitude (default: preset centre)")] = None,
     seed_lon: Annotated[float | None, typer.Option(help="ignition longitude")] = None,
     deploy_crew: Annotated[bool, typer.Option("--deploy/--no-deploy", help="overlay a personalised firefighter deployment at the ignition point")] = True,
+    slope: Annotated[float, typer.Option(help="DEM uphill-spread coefficient (0 = flat / wind-only; ~8 = terrain visibly shapes the front)")] = 8.0,
 ) -> None:
     """Pull LA weather, derive fuel dryness, run the macro CA spread, render to 3D HTML."""
     if city not in PRESETS:
@@ -233,11 +239,13 @@ def main(
     print(f"fetching {len(cells)} cells {date} via {source} (fire-weather vars, cached) ...")
     wx = cached.fetch(cells, day, day)
 
+    elevation = fetch_elevation(cells) if slope > 0 else None  # DEM for the terrain-aware slope term
     seed = cell_of(seed_lat or preset["lat"], seed_lon or preset["lon"], r).h3
     m = build_fire_map(
         f"{city.upper()} macro fire spread", wx, preset, zoom, r,
         seed_cell=seed, steps=steps, spread_fraction=spread,
         roster=sample_roster() if deploy_crew else None,
+        elevation=elevation, slope_coeff=slope,
     )
     suffix = " + firefighter deployment" if deploy_crew else ""
     html = to_self_contained_html([m], title=f"{city.upper()} — macro fire spread{suffix}",

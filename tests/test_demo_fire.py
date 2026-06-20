@@ -72,6 +72,20 @@ def test_crew_advance_with_the_front_while_staging_holds():
     assert pos(pf[0], "staging") == pos(pf[-1], "staging")  # staging crew hold at the rear
 
 
+def test_build_fire_map_terrain_slope_changes_the_front():
+    at = datetime(2025, 1, 7, 18, tzinfo=timezone.utc)
+    flat = build_fire_map("LA", _frame(at), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=6)
+    # strong synthetic DEM: north (higher latitude) is much higher -> uphill biases the front north
+    elev = {c: h3.cell_to_latlng(c)[0] * 100000 for c in DISK}
+    sloped = build_fire_map("LA", _frame(at), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=6,
+                            elevation=elev, slope_coeff=8.0)
+
+    def arrival_steps(m: dict) -> dict:  # fire-arrival layer (index 1): {cell: CA step}
+        return {r["cell"]: r["value"] for r in m["layers"][1]["frames"][0]["records"]}
+
+    assert arrival_steps(flat) != arrival_steps(sloped)  # terrain changes arrival timing/extent
+
+
 def test_spread_frames_animate_growing_front_and_scar():
     from demo_fire import _spread_frames
 
