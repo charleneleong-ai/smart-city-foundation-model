@@ -101,23 +101,31 @@ def spread_from_weather(
     return arrival, {"at": at, "wind_from": wind_from, "wind_speed": wind_speed, "dryness": dryness}
 
 
+_FIRE_COLORS = {
+    "unburned": [0, 0, 0, 0],          # transparent — satellite terrain shows through
+    "front":    [255, 120, 20, 230],   # bright orange — active ignition front
+    "scar":     [160, 55, 0, 140],     # dim ember-red — cooling scar behind the front
+}
+
+
 def _spread_frames(cells: list[str], arrival: dict[str, int], n_steps: int, at: datetime) -> list[dict]:
     """One frame per CA step so the time slider animates the burn front: at step `s` each cell is
-    the bright active front (arrival == s), a dimmer cooling scar (arrival < s), or unburned (0.0).
-    Every frame carries all cells in the same order so the viewer's index-aligned colouring holds."""
+    the bright active front (arrival == s), a dimmer cooling scar (arrival < s), or unburned
+    (transparent so the satellite terrain shows through). All cells kept in every frame so the
+    viewer's index-aligned colouring holds."""
     frames = []
     for s in range(n_steps + 1):
-        values = []
+        records = []
         for c in cells:
             a = arrival.get(c)
             if a is None or a > s:
-                values.append(0.0)  # not yet reached
+                val, color = 0.0, _FIRE_COLORS["unburned"]
             elif a == s:
-                values.append(1.0)  # active front
+                val, color = 1.0, _FIRE_COLORS["front"]
             else:
-                values.append(0.35)  # burn scar, cooling behind the front
-        df = pl.DataFrame({"cell": cells, "time": [at] * len(cells), "layer": "v", "value": values})
-        frames.append({"label": f"step {s}/{n_steps}", "records": h3_layer_records(df, at=at, vmin=0.0, vmax=1.0)})
+                val, color = 0.35, _FIRE_COLORS["scar"]
+            records.append({"cell": c, "value": val, "color": color, "height": val})
+        frames.append({"label": f"step {s}/{n_steps}", "records": records})
     return frames
 
 
