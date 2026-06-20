@@ -78,3 +78,11 @@ def test_layer_spans_its_global_value_range():
     assert "00:00" in html and "12:00" in html  # frame labels embedded
     assert '"vmin": 1.0' in html and '"vmax": 9.0' in html  # layer spans its global value range
     assert 'id="play"' in html  # play button present for animation
+
+
+def test_basemap_satellite_swaps_in_esri_raster():
+    m = _map("m", [_layer("t", [_frame("12:00", 4.5)])])
+    sat = to_self_contained_html([m], basemap="satellite")
+    assert "World_Imagery" in sat and '"type": "raster"' in sat  # esri imagery raster style
+    assert "cartocdn.com" not in sat  # dark vector style replaced
+    assert "World_Imagery" not in to_self_contained_html([m])  # default stays dark (cartocdn)
