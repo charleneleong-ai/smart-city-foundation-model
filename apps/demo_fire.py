@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
+import h3
 import polars as pl
 import typer
 
@@ -119,6 +120,30 @@ def _spread_frames(cells: list[str], arrival: dict[str, int], n_steps: int, at: 
     return frames
 
 
+def _front_centroid(arrival: dict[str, int], step: int, default: tuple[float, float]) -> tuple[float, float]:
+    """Mean lat/lon of the cells igniting at `step` (the active front); `default` if this step has
+    no new ignitions (so callers can carry the front forward rather than snapping back)."""
+    front = [h3.cell_to_latlng(c) for c, a in arrival.items() if a == step]
+    if not front:
+        return default
+    return sum(la for la, _ in front) / len(front), sum(lo for _, lo in front) / len(front)
+
+
+def _crew_frames(base: list[dict], seed: tuple[float, float], arrival: dict[str, int], n_steps: int) -> list[list[dict]]:
+    """Per-CA-step crew records: on-task crew advance toward the active fire front each step (keeping
+    their per-crew offset from the seed); staging crew hold at the rear. Only positions change —
+    risk/role/colour are the fixed deployment decision."""
+    frames, front = [], seed
+    for s in range(n_steps + 1):
+        front = _front_centroid(arrival, s, front)  # carry the front forward on empty steps
+        frames.append([
+            r if r["role"] == "staging"
+            else {**r, "lat": round(front[0] + (r["lat"] - seed[0]), 6), "lon": round(front[1] + (r["lon"] - seed[1]), 6)}
+            for r in base
+        ])
+    return frames
+
+
 def build_fire_map(
     name: str,
     wx: pl.DataFrame,
@@ -167,7 +192,9 @@ def build_fire_map(
             duration_min=240.0,
         )
         plan = deploy(scenario, roster, constraints or Constraints(required_capacity=4.0))
-        m["plan"] = crew_records(plan, roster, scenario)  # crew markers + roster panel over the fire
+        base = crew_records(plan, roster, scenario)
+        m["plan"] = base  # static crew markers + roster panel over the fire
+        m["plan_frames"] = _crew_frames(base, h3.cell_to_latlng(seed_cell), arrival, n_steps)  # advance w/ front
     return m
 
 

@@ -181,7 +181,8 @@ _TEMPLATE = """<!DOCTYPE html>
       material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
       updateTriggers: { getFillColor: [mapIdx, layerIdx, frame], getElevation: [mapIdx, layerIdx, frame, extruded] },
     }), new deck.ScatterplotLayer({
-      id: 'crew', data: (M().plan || []),
+      // per-frame crew (advance with the front) if provided, else the static plan
+      id: 'crew', data: ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []),
       getPosition: d => [d.lon, d.lat], getFillColor: d => d.color,
       getRadius: d => 12 + 60 * d.risk, radiusUnits: 'meters', radiusMinPixels: 5,
       stroked: true, getLineColor: [10, 10, 10], lineWidthMinPixels: 1, pickable: true,
@@ -314,6 +315,7 @@ def _js_map(m: dict) -> dict:
         "elev": m.get("elevation_scale", 900.0),
         "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
         "plan": m.get("plan", []),  # per-firefighter deployment markers (empty for non-fire maps)
+        "plan_frames": m.get("plan_frames"),  # optional per-frame crew positions (advance with the front)
     }
 
 

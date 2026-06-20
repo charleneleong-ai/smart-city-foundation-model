@@ -54,6 +54,24 @@ def test_build_fire_map_overlays_deployment_at_ignition_when_roster_given():
     assert any(abs(r["lat"] - slat) < 0.02 and abs(r["lon"] - slon) < 0.02 for r in m["plan"])
 
 
+def test_crew_advance_with_the_front_while_staging_holds():
+    from sctwin.deploy import Constraints, sample_roster
+
+    at = datetime(2025, 1, 7, 18, tzinfo=timezone.utc)
+    roster = sample_roster()
+    m = build_fire_map("LA", _frame(at), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=3,
+                       roster=roster, constraints=Constraints(required_capacity=3.0))
+    pf = m["plan_frames"]
+    assert len(pf) == len(m["layers"][2]["frames"])  # one crew-frame per fire-spread step
+
+    def pos(frame: list[dict], role: str) -> tuple[float, float]:
+        r = next(rec for rec in frame if rec["role"] == role)
+        return r["lat"], r["lon"]
+
+    assert pos(pf[0], "ba") != pos(pf[-1], "ba")  # on-task crew advance with the front
+    assert pos(pf[0], "staging") == pos(pf[-1], "staging")  # staging crew hold at the rear
+
+
 def test_spread_frames_animate_growing_front_and_scar():
     from demo_fire import _spread_frames
 
