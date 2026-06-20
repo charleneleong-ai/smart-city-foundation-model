@@ -107,6 +107,7 @@ _TEMPLATE = """<!DOCTYPE html>
     </div>
     <div id="btns">
       <button id="play" class="btn">&#9654; Play</button>
+      <button id="playday" class="btn">&#9654; Day</button>
       <button id="toggle" class="btn">2D / 3D</button>
     </div>
   </div>
@@ -149,7 +150,13 @@ _TEMPLATE = """<!DOCTYPE html>
 
   const slider = document.getElementById('time'), radius = document.getElementById('radius');
   const playBtn = document.getElementById('play');
-  let visRadius = 0, timer = null;  // km radius around the (movable) centre; set once distances are computed
+  const dayBtn = document.getElementById('playday');  // loops the current day (24 hourly frames); hidden on single-day layers
+  function syncDayBtn() {
+    const multi = M().layers[layerIdx].frames.length > 24;
+    dayBtn.style.display = multi ? '' : 'none';
+    if (!multi && playMode === 'day') setPlay('day');  // pause a day-loop that just lost its button
+  }
+  let visRadius = 0, timer = null, playMode = null;  // km radius around the (movable) centre; set once distances are computed
   let center = [MAPS[0].lon, MAPS[0].lat], cellDist = [];
   const M = () => MAPS[mapIdx];
   const marker = new maplibregl.Marker({ color: '#ff5a3c', scale: 1.25 }).setLngLat(center).addTo(map);
@@ -233,7 +240,7 @@ _TEMPLATE = """<!DOCTYPE html>
       .map(([g, opts]) => g ? `<optgroup label="${g}">${opts.join('')}</optgroup>` : opts.join('')).join('');
     center = [m.lon, m.lat]; marker.setLngLat(center); recompute();
     visRadius = +radius.max; radius.value = visRadius;
-    slider.max = m.layers[0].frames.length - 1; slider.value = 0;
+    slider.max = m.layers[0].frames.length - 1; slider.value = 0; syncDayBtn();
     const lg = document.getElementById('legend'), catLegend = m.legend && m.legend.length;  // categorical swatches vs gradient
     lg.style.display = catLegend ? 'block' : 'none';
     document.getElementById('bar').style.display = catLegend ? 'none' : '';
@@ -247,7 +254,7 @@ _TEMPLATE = """<!DOCTYPE html>
   function selectLayer(i) {
     layerIdx = (i + M().layers.length) % M().layers.length;
     document.getElementById('layer').value = layerIdx;
-    slider.max = M().layers[layerIdx].frames.length - 1; setFrame(0);
+    slider.max = M().layers[layerIdx].frames.length - 1; setFrame(0); syncDayBtn();
   }
   function stepTime(d) {
     const n = M().layers[layerIdx].frames.length; setFrame((frame + d + n) % n);
@@ -281,11 +288,22 @@ _TEMPLATE = """<!DOCTYPE html>
   slider.addEventListener('input', e => setFrame(+e.target.value));
   radius.addEventListener('input', e => { visRadius = +e.target.value; render(); });
   document.getElementById('toggle').addEventListener('click', () => { extruded = !extruded; render(); });
-  playBtn.addEventListener('click', () => {
-    if (timer) { clearInterval(timer); timer = null; playBtn.innerHTML = '&#9654; Play'; }
-    else { timer = setInterval(() => setFrame((frame + 1) % M().layers[layerIdx].frames.length), 420);
-           playBtn.innerHTML = '&#9208; Pause'; }
-  });
+  function tick() {  // 'day' loops the current day's 24 hourly frames; 'all' runs the whole window continuously
+    const n = M().layers[layerIdx].frames.length;
+    if (playMode === 'day') {
+      const start = Math.floor(frame / 24) * 24, end = Math.min(start + 24, n);
+      setFrame(frame + 1 >= end ? start : frame + 1);
+    } else { setFrame((frame + 1) % n); }
+  }
+  function setPlay(mode) {
+    if (timer) { clearInterval(timer); timer = null; }
+    playMode = playMode === mode ? null : mode;  // clicking the active mode pauses
+    if (playMode) timer = setInterval(tick, 420);
+    playBtn.innerHTML = playMode === 'all' ? '&#9208; Pause' : '&#9654; Play';
+    dayBtn.innerHTML = playMode === 'day' ? '&#9208; Pause' : '&#9654; Day';
+  }
+  playBtn.addEventListener('click', () => setPlay('all'));
+  dayBtn.addEventListener('click', () => setPlay('day'));
   selectMap(0);
 </script>
 </body>

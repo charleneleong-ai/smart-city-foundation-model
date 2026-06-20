@@ -94,6 +94,9 @@ def _weather(cells: list, start: datetime, end: datetime) -> pl.DataFrame:
     return reg.get("weather.t2m", cells, start, end)
 
 
+_TS_FMT = "%Y · %b %d · %H:%M"  # slider readout: year · month day · time-of-day
+
+
 def _frames(frame: pl.DataFrame, times: list, vmin: float, vmax: float, fmt: str) -> list[dict]:
     return [
         {"label": t.strftime(fmt), "records": h3_layer_records(frame, at=t, vmin=vmin, vmax=vmax)}
@@ -168,7 +171,7 @@ def _verify_layers(results: pl.DataFrame, specs: list, group: str) -> list[dict]
                 "unit": unit,
                 "group": group,
                 "mode": mode,
-                "frames": _frames(fl, times, vmin, vmax, "%m-%d %H:%M"),
+                "frames": _frames(fl, times, vmin, vmax, _TS_FMT),
             }
         )
     return out
@@ -215,7 +218,7 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
             "unit": "°C",
             "group": "Inputs",
             "mode": "auto",
-            "frames": _frames(f, times, vmin, vmax, "%m-%d %H:%M"),
+            "frames": _frames(f, times, vmin, vmax, _TS_FMT),
         }
 
     # Output 1: weather forecast (predict t2m from calendar + its own lags)
@@ -247,7 +250,7 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
             "unit": "load",
             "group": "Intervention (retrofit)",
             "mode": mode,
-            "frames": _frames(f, times, vmin, vmax, "%m-%d %H:%M"),
+            "frames": _frames(f, times, vmin, vmax, _TS_FMT),
         }
 
     intervention_out = [
