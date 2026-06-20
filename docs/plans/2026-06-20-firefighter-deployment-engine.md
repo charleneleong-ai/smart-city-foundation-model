@@ -218,7 +218,7 @@ git commit -m "feat(deploy): Firefighter profile + varied sample roster"
 
 **Interfaces:**
 - Consumes: `FireScenario` (Task 1).
-- Produces: `PPE_ATTENUATION: dict[str,float]`, `ROLE_EXERTION: dict[str,float]`; `toxicant_dose(scenario, time_on_scene_min, ppe) -> float`; `heat_load(scenario, time_on_scene_min, role, ppe) -> float`.
+- Produces: `PPE_ATTENUATION: dict[str,float]`, `ROLE_EXERTION: dict[str,float]`; `toxicant_dose(scenario, time_on_scene_min, ppe) -> float`; `heat_load(scenario, time_on_scene_min, role) -> float`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -401,7 +401,7 @@ def combined_risk(
     """The personalised combined index. The `prior_band` is symmetric prior uncertainty on the
     transferred dose-response coupling — it is NOT a calibrated/conformal interval."""
     td = toxicant_dose(scenario, time_on_scene_min, ppe)
-    hl = heat_load(scenario, time_on_scene_min, role, ppe)
+    hl = heat_load(scenario, time_on_scene_min, role)
     drivers = {"acute": acute_risk(ff, hl), "incident": incident_dose_risk(td, ff), "career": career_risk(ff, td)}
     value = weights.acute * drivers["acute"] + weights.incident * drivers["incident"] + weights.career * drivers["career"]
     return RiskScore(value, value * (1.0 - prior_band), value * (1.0 + prior_band), drivers)

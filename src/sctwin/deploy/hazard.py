@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 # fire type -> relative combustion-product toxicity of its smoke (dimensionless multiplier)
 FIRE_TOXICITY: dict[str, float] = {
@@ -31,3 +32,34 @@ class FireScenario:
 
     def toxicity(self) -> float:
         return FIRE_TOXICITY[self.fire_type]
+
+    @classmethod
+    def from_live(
+        cls,
+        cell_h3: str,
+        res: int,
+        *,
+        fire_type: str,
+        size: float,
+        duration_min: float,
+        pm25: float,
+        when: datetime,
+        adapter,
+    ) -> "FireScenario":
+        """Build a scenario from live NWP. `adapter` is an OpenMeteoForecastAdapter configured with
+        WEATHER_VARS; `pm25` (smoke) is supplied for now — CAMS/FRP wiring is a follow-up."""
+        from sctwin.geo import Cell
+
+        df = adapter.fetch([Cell(h3=cell_h3, res=res)], when, when)
+        latest = df.sort("time").group_by("layer", maintain_order=True).last()
+        vals = dict(zip(latest["layer"].to_list(), latest["value"].to_list()))
+        return cls(
+            cell=cell_h3,
+            fire_type=fire_type,
+            size=size,
+            pm25=pm25,
+            temp_c=vals["t2m"],
+            wind_speed=vals["wind_speed"],
+            wind_dir=vals["wind_dir"],
+            duration_min=duration_min,
+        )
