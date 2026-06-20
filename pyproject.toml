@@ -30,6 +30,7 @@ packages = ["src/sctwin"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+pythonpath = [".", "apps"]
 
 [tool.ruff]
 line-length = 100

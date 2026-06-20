@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
+import h3
 import polars as pl
 import typer
 
@@ -26,18 +27,24 @@ from sctwin.adapters.open_meteo import (
     OpenMeteoForecastAdapter,
     OpenMeteoWeatherAdapter,
 )
+from sctwin.adapters.elevation import fetch_elevation
 from sctwin.app.cells import cells_in_bbox
 from sctwin.app.render import h3_layer_records
+from sctwin.deploy import Constraints, FireScenario, deploy, sample_roster
+from sctwin.deploy.roster import Roster
+from sctwin.deploy.viz import crew_records
 from sctwin.fire import dryness_field, simulate
 from sctwin.geo import cell_of
+
+_WILDFIRE_PM25 = 180.0  # representative heavy wildfire-smoke PM2.5 (the CA has no smoke channel)
 
 MAX_CELLS = 1000  # Open-Meteo batches ~100 coords/request and rate-limits by location count
 _ABOUT = (
     "Macro fire-spread stub. 'Fuel dryness' is a per-cell ignitability proxy from temperature, "
     "humidity and recent rain; 'fire arrival' is the cellular-automaton burn front from the "
-    "ignition seed, pushed downwind, normalised to the window's mean dryness so the relative "
-    "front shape shows. Colour/height encode the value. NOT an operational fire model — no "
-    "fuel-physics, antecedent-drought memory, ember spotting, or terrain; relative macro front only."
+    "ignition seed, pushed downwind and uphill (DEM slope term), normalised to the window's mean "
+    "dryness so the relative front shape shows. Colour/height encode the value. NOT an operational "
+    "fire model — no fuel-physics, antecedent-drought memory, or ember spotting; relative macro front only."
 )
 
 
@@ -94,6 +101,79 @@ def spread_from_weather(
     return arrival, {"at": at, "wind_from": wind_from, "wind_speed": wind_speed, "dryness": dryness}
 
 
+_FIRE_COLORS = {
+    "unburned": [0, 0, 0, 0],          # transparent — satellite terrain shows through
+    "front":    [255, 120, 20, 230],   # bright orange — active ignition front
+    "scar":     [160, 55, 0, 140],     # dim ember-red — cooling scar behind the front
+}
+
+
+def _spread_frames(cells: list[str], arrival: dict[str, int], n_steps: int, at: datetime) -> list[dict]:
+    """One frame per CA step so the time slider animates the burn front: at step `s` each cell is
+    the bright active front (arrival == s), a dimmer cooling scar (arrival < s), or unburned
+    (transparent so the satellite terrain shows through). All cells kept in every frame so the
+    viewer's index-aligned colouring holds."""
+    frames = []
+    for s in range(n_steps + 1):
+        records = []
+        for c in cells:
+            a = arrival.get(c)
+            if a is None or a > s:
+                val, color = 0.0, _FIRE_COLORS["unburned"]
+            elif a == s:
+                val, color = 1.0, _FIRE_COLORS["front"]
+            else:
+                val, color = 0.35, _FIRE_COLORS["scar"]
+            records.append({"cell": c, "value": val, "color": color, "height": val})
+        frames.append({"label": f"step {s}/{n_steps}", "records": records})
+    return frames
+
+
+def _front_centroid(arrival: dict[str, int], step: int, default: tuple[float, float]) -> tuple[float, float]:
+    """Mean lat/lon of the cells igniting at `step` (the active front); `default` if this step has
+    no new ignitions (so callers can carry the front forward rather than snapping back)."""
+    front = [h3.cell_to_latlng(c) for c, a in arrival.items() if a == step]
+    if not front:
+        return default
+    return sum(la for la, _ in front) / len(front), sum(lo for _, lo in front) / len(front)
+
+
+def _crew_frames(base: list[dict], seed: tuple[float, float], arrival: dict[str, int], n_steps: int) -> list[list[dict]]:
+    """Per-CA-step crew records: on-task crew advance toward the active fire front each step (keeping
+    their per-crew offset from the seed); staging crew hold at the rear. Only positions change —
+    risk/role/colour are the fixed deployment decision."""
+    frames, front = [], seed
+    for s in range(n_steps + 1):
+        front = _front_centroid(arrival, s, front)  # carry the front forward on empty steps
+        frames.append([
+            r if r["role"] == "staging"
+            else {**r, "lat": round(front[0] + (r["lat"] - seed[0]), 6), "lon": round(front[1] + (r["lon"] - seed[1]), 6)}
+            for r in base
+        ])
+    return frames
+
+
+def crew_overlay(
+    wx: pl.DataFrame, seed_cell: str, arrival: dict[str, int], at: datetime,
+    wind_from: float, wind_speed: float, roster: Roster, n_steps: int, *,
+    constraints: Constraints | None = None,
+) -> dict:
+    """A personalised firefighter deployment over a fire, ready to merge onto a map dict:
+    `{"plan": ...}` (static crew markers + roster panel) and `{"plan_frames": ...}` (per-CA-step
+    positions that advance with the front). Scored against this fire's own peak-hour wind/heat.
+    `n_steps` is the layer's frame count − 1, passed in so the crew frames stay index-aligned with
+    whatever animated layer they overlay."""
+    temps = _at(wx, at, "t2m")
+    scenario = FireScenario(
+        cell=seed_cell, fire_type="grass", size=float(n_steps or 1), pm25=_WILDFIRE_PM25,
+        temp_c=sum(temps) / max(len(temps), 1), wind_speed=wind_speed, wind_dir=wind_from,
+        duration_min=240.0,
+    )
+    plan = deploy(scenario, roster, constraints or Constraints(required_capacity=4.0))
+    base = crew_records(plan, roster, scenario)
+    return {"plan": base, "plan_frames": _crew_frames(base, h3.cell_to_latlng(seed_cell), arrival, n_steps)}
+
+
 def build_fire_map(
     name: str,
     wx: pl.DataFrame,
@@ -104,9 +184,20 @@ def build_fire_map(
     seed_cell: str,
     steps: int = 20,
     spread_fraction: float = 0.5,
+    roster: Roster | None = None,
+    constraints: Constraints | None = None,
+    elevation: dict[str, float] | None = None,
+    slope_coeff: float = 0.0,
 ) -> dict:
-    """Run the spread and wrap it as a twin `map` with a fuel-dryness and a fire-arrival layer."""
-    arrival, meta = spread_from_weather(wx, seed_cell, steps=steps, spread_fraction=spread_fraction)
+    """Run the spread and wrap it as a twin `map` (fuel-dryness + fire-arrival + animated spread).
+    With `elevation` + `slope_coeff` the CA is terrain-aware (fire races uphill). If a `roster` is
+    given, also overlay a personalised firefighter deployment (crew markers + roster panel) at the
+    ignition point, scored against this fire's own wind/heat conditions."""
+    if elevation:  # drop ocean cells (DEM sea level) so fire / dryness stay on land, not the sea
+        land = {h for h, e in elevation.items() if e > 0.0}
+        wx = wx.filter(pl.col("cell").is_in(land))
+    arrival, meta = spread_from_weather(wx, seed_cell, steps=steps, spread_fraction=spread_fraction,
+                                        elevation=elevation, slope_coeff=slope_coeff)
     at, dryness, wind_from, wind_speed = meta["at"], meta["dryness"], meta["wind_from"], meta["wind_speed"]
     label = at.strftime("%m-%d %H:%MZ")
     n_steps = max(arrival.values()) if arrival else 0
@@ -118,16 +209,23 @@ def build_fire_map(
         recs = h3_layer_records(df, at=at, vmin=0.0, vmax=vmax) if field else []
         return {"name": layer_name, "unit": unit, "frames": [{"label": label, "records": recs}]}
 
-    return {
+    m = {
         "name": name,
         "subtitle": f"peak {label} · wind from {wind_from:.0f}° @ {wind_speed:.0f} km/h · "
         f"{len(arrival)}/{len(dryness)} cells burned in {n_steps} steps",
         **_view(preset, zoom, res),
         "layers": [
-            single("fuel dryness", "0..1", dryness, 1.0),
+            # animated burn front FIRST so the time slider / Play work on load
+            {"name": "fire spread", "unit": "CA step",
+             "frames": _spread_frames(list(dryness), arrival, n_steps, at)},
             single("fire arrival", "CA step", {c: float(s) for c, s in arrival.items()}, float(n_steps or 1)),
+            single("fuel dryness", "0..1", dryness, 1.0),
         ],
     }
+    if roster is not None:  # overlay personalised crew markers + roster panel, advancing with the front
+        m.update(crew_overlay(wx, seed_cell, arrival, at, wind_from, wind_speed, roster, n_steps,
+                              constraints=constraints))
+    return m
 
 
 def main(
@@ -136,10 +234,12 @@ def main(
     radius: Annotated[float | None, typer.Option(help="km around the preset centre")] = 8.0,
     res: Annotated[int | None, typer.Option(help="H3 resolution override (0..15)")] = None,
     steps: Annotated[int, typer.Option(help="CA spread steps to roll out")] = 20,
-    spread: Annotated[float, typer.Option(help="0..1 front threshold (lower = wider fan)")] = 0.5,
+    spread: Annotated[float, typer.Option(help="0..1 front threshold (lower = wider fan; 0.25 ≈ Palisades-scale)")] = 0.25,
     source: Annotated[str, typer.Option(help="open-meteo (archive) or open-meteo-forecast")] = "open-meteo",
     seed_lat: Annotated[float | None, typer.Option(help="ignition latitude (default: preset centre)")] = None,
     seed_lon: Annotated[float | None, typer.Option(help="ignition longitude")] = None,
+    deploy_crew: Annotated[bool, typer.Option("--deploy/--no-deploy", help="overlay a personalised firefighter deployment at the ignition point")] = True,
+    slope: Annotated[float, typer.Option(help="DEM uphill-spread coefficient (0 = flat / wind-only; ~8 = terrain visibly shapes the front)")] = 8.0,
 ) -> None:
     """Pull LA weather, derive fuel dryness, run the macro CA spread, render to 3D HTML."""
     if city not in PRESETS:
@@ -163,15 +263,21 @@ def main(
     print(f"fetching {len(cells)} cells {date} via {source} (fire-weather vars, cached) ...")
     wx = cached.fetch(cells, day, day)
 
+    elevation = fetch_elevation(cells)  # DEM: masks ocean cells + (slope>0) the terrain slope term
     seed = cell_of(seed_lat or preset["lat"], seed_lon or preset["lon"], r).h3
     m = build_fire_map(
         f"{city.upper()} macro fire spread", wx, preset, zoom, r,
         seed_cell=seed, steps=steps, spread_fraction=spread,
+        roster=sample_roster() if deploy_crew else None,
+        elevation=elevation, slope_coeff=slope,
     )
-    html = to_self_contained_html([m], title=f"{city.upper()} — macro fire spread", about=_ABOUT)
+    suffix = " + firefighter deployment" if deploy_crew else ""
+    html = to_self_contained_html([m], title=f"{city.upper()} — macro fire spread{suffix}",
+                                  about=_ABOUT, basemap="satellite")  # Esri satellite/terrain overlay
     out = Path(f"{city}_fire_3d.html")
     out.write_text(html)
-    print(f"wrote {out} — {m['subtitle']}")
+    crew = f" · {len(m['plan'])} crew deployed" if "plan" in m else ""
+    print(f"wrote {out} — {m['subtitle']}{crew}")
 
 
 if __name__ == "__main__":

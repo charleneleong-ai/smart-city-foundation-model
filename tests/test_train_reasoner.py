@@ -7,7 +7,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps"))
 
-from train_reasoner import intervention_env  # noqa: E402
+from sctwin.adapters.demand import LCLTariffAdapter, NEEDRetrofitAdapter  # noqa: E402
+
+from train_reasoner import build_real_intervention_samples, intervention_env  # noqa: E402
 
 _TIMES = [datetime(2023, 1, 1, h) for h in range(4)]
 _TEMPS = [10.0, 14.0, 2.0, 18.0]  # HDD = [8, 4, 16, 0], mean 7
@@ -26,3 +28,56 @@ def test_intervention_env_builds_one_question_per_cell_with_per_cell_oracle_delt
     by_cell = {q.intervention.cell: q.true_delta for q in env.questions()}
     # mean Δ = -0.5*beta*mean(HDD): per-cell, not a shared constant (a: -0.5*2*7, b: -0.5*4*7)
     assert by_cell == {"a": pytest.approx(-7.0), "b": pytest.approx(-14.0)}
+
+
+# LCL ToU 5->3 / Std 4->4 across 2012/2013 (DiD peak = -2); NEED treated -1250 vs control -150 (DiD = -1100)
+_LCL_2Y = pl.DataFrame(
+    {
+        "stdorToU": ["ToU", "ToU", "Std", "Std"],
+        "DateTime": [f"{y}-06-01 18:00:00.0000000" for y in (2012, 2013)] * 2,
+        "value": [5.0, 3.0, 4.0, 4.0],
+    }
+)
+_NEED_DID = pl.DataFrame(
+    {
+        "LOFT_FLAG": [1, 1, 0, 0],
+        "Econ2010": [5000.0, 6000.0, 5500.0, 6500.0],
+        "Econ2013": [4000.0, 4500.0, 5400.0, 6300.0],
+    }
+)
+
+
+class _StubLCL(LCLTariffAdapter):
+    def _read(self) -> pl.DataFrame:
+        return _LCL_2Y
+
+
+class _StubNEED(NEEDRetrofitAdapter):
+    def _read(self) -> pl.DataFrame:
+        return _NEED_DID
+
+
+def test_build_real_intervention_samples_uses_measured_did_targets():
+    cols, env = build_real_intervention_samples("c", tariff=_StubLCL("x"), retrofit=_StubNEED("x"))
+    assert set(cols) == {"prompt", "true_delta", "scale"}
+    by_kind = {q.intervention.kind: q.true_delta for q in env.questions()}
+    assert by_kind == {
+        "tariff": pytest.approx(-2.0),
+        "retrofit": pytest.approx(-1100.0),
+    }  # the DiD Δ
+
+
+@pytest.mark.parametrize(
+    "tariff,retrofit,kind", [(_StubLCL("x"), None, "tariff"), (None, _StubNEED("x"), "retrofit")]
+)
+def test_build_real_intervention_samples_single_adapter(tariff, retrofit, kind):
+    cols, env = build_real_intervention_samples("c", tariff=tariff, retrofit=retrofit)
+    assert [q.intervention.kind for q in env.questions()] == [
+        kind
+    ]  # omitting one adapter -> one question
+    assert len(cols["true_delta"]) == 1
+
+
+def test_build_real_intervention_samples_needs_an_adapter():
+    with pytest.raises(ValueError, match="real oracle"):
+        build_real_intervention_samples("c")

@@ -21,13 +21,15 @@ from typing import Annotated
 import h3
 import typer
 
-from demo_fire import spread_from_weather
+from demo_fire import crew_overlay, spread_from_weather
 from eval_fire import bbox
 from render_3d import to_self_contained_html
 
 from sctwin.adapters.cache import CachingAdapter
+from sctwin.adapters.elevation import fetch_elevation
 from sctwin.adapters.open_meteo import WEATHER_VARS, OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
+from sctwin.deploy import sample_roster
 from sctwin.geo import cell_of, center_of
 from sctwin.verify.burn import cells_from_geojson, score
 
@@ -86,6 +88,15 @@ def build_backtest_map(name: str, cells, observed, arrival, meta, sc, *, res: in
     }
 
 
+def overlay_crew(m: dict, wx, seed: str, arrival: dict[str, int], meta: dict) -> dict:
+    """Merge a personalised firefighter deployment onto the backtest map: crew markers + roster
+    panel, scored against this fire's own peak-hour wind/heat, advancing with the model front.
+    `maxstep` mirrors build_backtest_map's frame count so the crew frames stay index-aligned."""
+    maxstep = max(arrival.values()) if arrival else 1
+    return {**m, **crew_overlay(wx, seed, arrival, meta["at"], meta["wind_from"], meta["wind_speed"],
+                                sample_roster(), maxstep)}
+
+
 def main(
     perimeter: Annotated[Path, typer.Option(help="observed burn perimeter GeoJSON")],
     out: Annotated[Path, typer.Option(help="output HTML")] = Path("la_fire_3d.html"),
@@ -97,6 +108,8 @@ def main(
     seed_lon: Annotated[float, typer.Option(help="ignition longitude")] = -118.5425,
     margin: Annotated[float, typer.Option(help="km padding around the perimeter bbox")] = 1.2,
     basemap: Annotated[str, typer.Option(help="satellite or dark")] = "satellite",
+    deploy_crew: Annotated[bool, typer.Option("--deploy/--no-deploy", help="overlay a personalised firefighter deployment that advances with the model front")] = True,
+    mask_water: Annotated[bool, typer.Option("--mask-water/--no-mask-water", help="drop sea-level (DEM ≤ 0) cells so the model can't predict fire over the ocean")] = True,
 ) -> None:
     """Render the animated fire-spread-vs-real-burn backtest as a self-contained 3D HTML."""
     gj = json.loads(perimeter.read_text())
@@ -107,6 +120,10 @@ def main(
     if not 0 < len(cells) <= MAX_CELLS:
         raise SystemExit(f"{len(cells)} cells — keep 1..{MAX_CELLS}; raise --res or shrink --margin")
 
+    if mask_water:  # DEM: drop ocean cells from the model + render universe so no fire over the Pacific
+        land = {h for h, e in fetch_elevation(cells).items() if e > 0.0}
+        cells = [c for c in cells if c.h3 in land]
+
     cached = CachingAdapter(OpenMeteoWeatherAdapter(variables=WEATHER_VARS), ".cache/open-meteo-fire")
     day = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
     print(f"observed {len(observed)} cells · fetching {len(cells)} weather cells {date} ...")
@@ -115,9 +132,13 @@ def main(
     arrival, meta = spread_from_weather(wx, seed, steps=steps, spread_fraction=spread)
     sc = score(set(arrival), observed)
     m = build_backtest_map("Palisades fire — CA vs real burn", cells, observed, arrival, meta, sc, res=res)
-    out.write_text(to_self_contained_html([m], title="Palisades fire — macro CA vs real burn", about=_ABOUT, basemap=basemap))
+    if deploy_crew:
+        m = overlay_crew(m, wx, seed, arrival, meta)
+    suffix = " + firefighter deployment" if deploy_crew else ""
+    out.write_text(to_self_contained_html([m], title=f"Palisades fire — macro CA vs real burn{suffix}", about=_ABOUT, basemap=basemap))
     n_steps = max(arrival.values()) if arrival else 0
-    print(f"wrote {out} — IoU {sc['iou']:.2f} · recall {sc['recall']:.2f} · {n_steps} steps animated")
+    crew = f" · {len(m['plan'])} crew deployed" if deploy_crew else ""
+    print(f"wrote {out} — IoU {sc['iou']:.2f} · recall {sc['recall']:.2f} · {n_steps} steps animated{crew}")
 
 
 if __name__ == "__main__":

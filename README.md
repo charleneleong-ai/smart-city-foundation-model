@@ -16,6 +16,14 @@ be* — predicted per H3 cell, at macro and micro scale, with the uncertainty ne
 See: [`docs/physical-ai-world-model.md`](docs/physical-ai-world-model.md) ·
 [design spec](docs/specs/2026-06-12-urban-digital-twin-design.md).
 
+![Palisades fire backtest: the macro cellular-automaton front advancing over the real burn perimeter, with a personalised firefighter deployment, on satellite terrain](https://github.com/charleneleong-ai/smart-city-foundation-model/blob/feat/weather-fire-variables/docs/media/palisades_fire.gif?raw=true)
+
+*Macro fire-spread **backtest** on the 2025 LA Palisades fire: the wind- and terrain-driven
+cellular-automaton front (yellow→red = **hit**, magenta = **over-reach**) walking over the real
+NIFC burn perimeter (blue = **missed**), water-masked to land, with a **personalised
+exposure→health firefighter deployment** advancing with the front. IoU 0.35 · recall 0.40.
+Built by [`apps/viz_fire_3d.py`](apps/viz_fire_3d.py) → self-contained `la_fire_3d.html`.*
+
 ## Quickstart
 
 ```bash

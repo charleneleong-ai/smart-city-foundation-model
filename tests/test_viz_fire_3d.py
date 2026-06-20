@@ -1,9 +1,12 @@
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
+import polars as pl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps"))
 
-from viz_fire_3d import build_backtest_map  # noqa: E402
+from viz_fire_3d import build_backtest_map, overlay_crew  # noqa: E402
 
 from sctwin.geo import cell_of  # noqa: E402
 
@@ -39,3 +42,26 @@ def test_front_grows_monotonically_over_steps():
     frames = m["layers"][0]["frames"]
     lit = [sum(1 for r in f["records"] if r["value"] > 0) for f in frames]  # cells ignited by step t
     assert lit == sorted(lit) and lit[0] == 0 and lit[-1] == 2  # monotonic; both ignited by the last step
+
+
+def test_overlay_crew_advances_with_the_model_front_over_the_ground_truth():
+    at = datetime(2025, 1, 7, 18, tzinfo=timezone.utc)
+    cells = [cell_of(34.07 + 0.01 * i, -118.54, 8) for i in range(4)]
+    ids = [c.h3 for c in cells]
+    arrival = {ids[0]: 0, ids[1]: 1, ids[2]: 2, ids[3]: 3}  # model front marches north over 4 steps
+    wx = pl.DataFrame({"cell": ids, "time": [at] * 4, "layer": ["t2m"] * 4, "value": [34.0] * 4})
+    meta = {"at": at, "wind_from": 20.0, "wind_speed": 30.0}
+
+    base = build_backtest_map("t", cells, {ids[0], ids[3]}, arrival, meta, {"iou": 0.5, "recall": 0.5}, res=8)
+    m = overlay_crew(base, wx, ids[0], arrival, meta)
+
+    assert {r["ff_id"] for r in m["plan"]}  # a deployment was scored
+    pf = m["plan_frames"]
+    assert len(pf) == len(m["layers"][0]["frames"])  # one crew-frame per CA step
+
+    def pos(frame, role):
+        r = next(rec for rec in frame if rec["role"] == role)
+        return r["lat"], r["lon"]
+
+    assert pos(pf[0], "ba") != pos(pf[-1], "ba")  # on-task crew advance with the front
+    assert pos(pf[0], "staging") == pos(pf[-1], "staging")  # staging crew hold at the rear
