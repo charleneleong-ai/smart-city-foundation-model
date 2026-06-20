@@ -39,12 +39,13 @@ The seam is **narrower than demographics-vs-clinical**: Fire-Shield already carr
 clinical snapshot*. What it genuinely lacks is **`sex`, `years_service`, and `career_dose`** — tenure,
 sex, and cumulative career dose. Those three must come from an occupational-health record, not the app.
 
-**Fields Fire-Shield carries that our archetype is _missing_** (and should adopt — they make the
-adapter lossless on the clinical side): `heatTolerance` (`low/avg/high` — a direct heat-susceptibility
-input, currently only implicit in our `fitness`), `hrBaseline` (resting HR — a cardiovascular-fitness
-proxy), the full `conditions[]` list (richer than two bool flags), and `prevShiftHours` / `hydrationStart`
-(recent-shift state, between live and static). Widening our archetype to keep `heatTolerance` +
-`conditions[]` beats lossily collapsing them to two booleans.
+**Fields Fire-Shield carries that our archetype was missing.** Two are now **adopted** — the
+[`Firefighter`](../../src/sctwin/deploy/roster.py#L7) archetype carries `heat_tolerance` (`low/avg/high`,
+a direct heat-susceptibility multiplier in [`acute_risk`](../../src/sctwin/deploy/risk.py#L26)) and a
+`conditions` tuple (the fuller clinical ledger; each listed comorbidity adds a small acute burden beyond
+the two `cardiovascular`/`respiratory` flags, mirroring Fire-Shield's own `conditionPenalty`). Still
+**not** carried (candidate follow-ups): `hrBaseline` (resting HR — a cardiovascular-fitness proxy) and
+`prevShiftHours` / `hydrationStart` (recent-shift state, between live and static).
 
 ## B. Live vitals → acute strain (Fire-Shield only)
 
@@ -117,11 +118,11 @@ that deployed the firefighter.
 ## Three bridge mechanisms
 
 1. **Archetype adapter** — `from_fire_shield(profile) -> Firefighter`: map `id/age/role` directly;
-   map `fitness` ordinal→scalar; map `respiratoryRisk` + parse `conditions[]` into the
-   `respiratory`/`cardiovascular` flags (better: widen our archetype to keep the `conditions[]` list +
-   `heatTolerance` rather than lossily collapsing to two bools). Only **`sex`, `years_service`,
-   `career_dose`** must come from an occupational-health record — fail loud on *those three*, not on
-   the clinical fields Fire-Shield already provides.
+   map `fitness` ordinal→scalar; copy `heatTolerance` → `heat_tolerance` and `conditions[]` →
+   `conditions` straight through (the archetype now carries both — no lossy collapse), and still set the
+   `respiratory`/`cardiovascular` flags from `respiratoryRisk` + a `conditions` parse for the optimiser's
+   keyed factors. Only **`sex`, `years_service`, `career_dose`** must come from an occupational-health
+   record — fail loud on *those three*, not on the clinical fields Fire-Shield already provides.
 2. **`career_dose` feedback loop** — Fire-Shield measures realised incident dose live (`smokeDensity ×
    time`); after an incident that realised dose should be **banked back** into the archetype's
    `career_dose`, closing PREVENT→RESPOND→PREVENT. Today `career_dose` is a static input; this makes it

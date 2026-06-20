@@ -47,6 +47,7 @@ _TEMPLATE = """<!DOCTYPE html>
   #legend { margin: 9px 0 2px; display: none; }
   #legend .lrow { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; opacity: .92; }
   #legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 14px; border: 1px solid rgba(255,255,255,.3); }
+  #legend .cap { font-size: 11px; opacity: .68; margin: 5px 0 1px; display: block; }
   #about { font-size: 12px; opacity: .82; margin: 11px 0 0; }
   #controls { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 11px; }
   .ctl { margin-bottom: 9px; }
@@ -235,11 +236,13 @@ _TEMPLATE = """<!DOCTYPE html>
     visRadius = +radius.max; radius.value = visRadius;
     slider.max = m.layers[0].frames.length - 1; slider.value = 0;
     const lg = document.getElementById('legend'), catLegend = m.legend && m.legend.length;  // categorical swatches vs gradient
+    const showGrad = !catLegend || m.gradient;  // gradient bar stays when the map asks to keep it
     lg.style.display = catLegend ? 'block' : 'none';
-    document.getElementById('bar').style.display = catLegend ? 'none' : '';
-    document.getElementById('scale').style.display = catLegend ? 'none' : '';
-    if (catLegend) lg.innerHTML = m.legend.map(e =>
-      `<div class="lrow"><span class="sw" style="background:rgb(${e.color.slice(0, 3).join(',')})"></span>${e.label}</div>`).join('');
+    document.getElementById('bar').style.display = showGrad ? '' : 'none';
+    document.getElementById('scale').style.display = showGrad ? '' : 'none';
+    if (catLegend) lg.innerHTML = m.legend.map(e => e.color  // swatch row vs caption-only row
+      ? `<div class="lrow"><span class="sw" style="background:rgb(${e.color.slice(0, 3).join(',')})"></span>${e.label}</div>`
+      : `<div class="lrow cap">${e.label}</div>`).join('');
     render();
     renderRoster();
   }
@@ -346,6 +349,7 @@ def _js_map(m: dict) -> dict:
         "name": m["name"], "subtitle": m.get("subtitle", ""),
         "lat": m["lat"], "lon": m["lon"], "zoom": m["zoom"], "pitch": m.get("pitch", 50.0),
         "elev": m.get("elevation_scale", 900.0), "legend": m.get("legend", []),
+        "gradient": m.get("gradient", False),  # keep the value-gradient bar even when a legend is shown
         "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
         "plan": m.get("plan", []),  # per-firefighter deployment markers (empty for non-fire maps)
         "plan_frames": m.get("plan_frames"),  # optional per-frame crew positions (advance with the front)

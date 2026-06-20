@@ -16,6 +16,8 @@ class Firefighter:
     respiratory: bool  # respiratory comorbidity flag
     fitness: float  # 0..1 (1 = peak)
     career_dose: float  # cumulative smoke-dose units banked to date
+    heat_tolerance: str = "avg"  # "low" / "avg" / "high" — heat-susceptibility band
+    conditions: tuple[str, ...] = ()  # fuller clinical ledger beyond the cv/resp flags
 
 
 Roster = list[Firefighter]
@@ -24,10 +26,10 @@ Roster = list[Firefighter]
 def sample_roster() -> Roster:
     """A deliberately varied demo watch — young/fit, veteran/CV, mid-career high-career-dose, etc."""
     return [
-        Firefighter("FF-01", 27, "M", "ba", 4, False, False, 0.95, 8.0),
-        Firefighter("FF-02", 34, "F", "ba", 9, False, False, 0.90, 22.0),
-        Firefighter("FF-03", 45, "M", "pump", 20, False, True, 0.70, 51.0),
-        Firefighter("FF-04", 52, "M", "ba", 27, True, False, 0.55, 73.0),
-        Firefighter("FF-05", 39, "F", "aerial", 14, False, False, 0.80, 34.0),
-        Firefighter("FF-06", 58, "M", "command", 33, True, True, 0.45, 88.0),
+        Firefighter("FF-01", 27, "M", "ba", 4, False, False, 0.95, 8.0, "high", ()),
+        Firefighter("FF-02", 34, "F", "ba", 9, False, False, 0.90, 22.0, "high", ()),
+        Firefighter("FF-03", 45, "M", "pump", 20, False, True, 0.70, 51.0, "avg", ("mild asthma",)),
+        Firefighter("FF-04", 52, "M", "ba", 27, True, False, 0.55, 73.0, "low", ("hypertension",)),
+        Firefighter("FF-05", 39, "F", "aerial", 14, False, False, 0.80, 34.0, "avg", ()),
+        Firefighter("FF-06", 58, "M", "command", 33, True, True, 0.45, 88.0, "low", ("hypertension", "prior MI")),
     ]

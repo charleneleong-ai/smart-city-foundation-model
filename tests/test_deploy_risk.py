@@ -22,3 +22,15 @@ def test_score_carries_a_prior_band_and_driver_breakdown():
 def test_weights_zero_out_terms():
     only_career = combined_risk(FRAIL, SCN, 20, "ba", "ba", weights=RiskWeights(acute=0.0, incident=0.0))
     assert only_career.value == only_career.drivers["career"] * 1.0
+
+
+def test_lower_heat_tolerance_raises_acute_risk():
+    high = Firefighter("h", 30, "M", "ba", 5, False, False, 0.9, 5.0, heat_tolerance="high")
+    low = Firefighter("l", 30, "M", "ba", 5, False, False, 0.9, 5.0, heat_tolerance="low")
+    assert combined_risk(low, SCN, 20, "ba", "ba").drivers["acute"] > combined_risk(high, SCN, 20, "ba", "ba").drivers["acute"]
+
+
+def test_listed_conditions_raise_acute_risk():
+    clean = Firefighter("c", 30, "M", "ba", 5, False, False, 0.9, 5.0)
+    burdened = Firefighter("b", 30, "M", "ba", 5, False, False, 0.9, 5.0, conditions=("hypertension", "diabetes"))
+    assert combined_risk(burdened, SCN, 20, "ba", "ba").drivers["acute"] > combined_risk(clean, SCN, 20, "ba", "ba").drivers["acute"]

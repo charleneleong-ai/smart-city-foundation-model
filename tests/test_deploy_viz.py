@@ -45,3 +45,16 @@ def test_deploy_map_payload_is_render_ready():
     assert [L["group"] for L in m["layers"]] == ["Fire", "Fire", "Fire"]
     assert {r["ff_id"] for r in m["plan"]} == {f.id for f in roster}
     assert m["lat"] == PRESET["lat"] and "elevation_scale" in m
+
+
+def test_deploy_map_legend_documents_inputs_and_drivers():
+    roster = sample_roster()
+    plan = recommend(SCN, roster, Constraints(required_capacity=3.0))
+    m = deploy_map(SCN, plan, roster, preset=PRESET)
+    labels = " ".join(e["label"] for e in m["legend"])
+    # the three risk drivers and the live scenario inputs are spelled out for the viewer
+    assert "acute + incident + career" in labels
+    assert "heat-tol" in labels and "career dose" in labels
+    assert "grass" in labels and "120" in labels and "70" in labels  # fire type, PM2.5, wind dir inlined
+    assert any(e.get("color") for e in m["legend"])  # crew colour swatches present (low/moderate/high)
+    assert m["gradient"] is True  # hex value-gradient kept alongside the legend
