@@ -63,6 +63,30 @@ def _peak_hour(wx: pl.DataFrame, times: list[datetime]) -> datetime:
     return max(times, key=danger)
 
 
+def spread_from_weather(
+    wx: pl.DataFrame, seed_cell: str, *, steps: int = 20, spread_fraction: float = 0.5
+) -> tuple[dict[str, int], dict]:
+    """Peak fire-weather hour -> dryness field + mean wind -> normalised wind-driven CA spread
+    from `seed_cell`. Returns (arrival_step_by_cell, meta) — the core the demo renders and the
+    backtest scores. Spread is normalised to the window's mean dryness so the WIND-DRIVEN front
+    shows regardless of absolute (e.g. winter) magnitude; it is the *relative* front, not absolute
+    ignition — the instantaneous dryness proxy has no antecedent-drought (FWI) memory."""
+    times = wx.select(pl.col("time").unique().sort()).to_series().to_list()
+    at = _peak_hour(wx, times)
+    dryness = dryness_field(wx, at)
+    wind_from = _circular_mean_deg(_at(wx, at, "wind_dir"))
+    speeds = _at(wx, at, "wind_speed")
+    wind_speed = sum(speeds) / max(len(speeds), 1)
+    mean_dry = sum(dryness.values()) / max(len(dryness), 1)
+    denom = min(wind_speed / 40.0, 1.0) * mean_dry
+    base_rate = 1.0 / denom if denom > 0 else 0.0  # 0 wind or soaked fuel -> no spread
+    arrival = simulate(
+        {seed_cell}, dryness, wind_from, steps,
+        wind_speed=wind_speed, base_rate=base_rate, threshold=spread_fraction,
+    )
+    return arrival, {"at": at, "wind_from": wind_from, "wind_speed": wind_speed, "dryness": dryness}
+
+
 def build_fire_map(
     name: str,
     wx: pl.DataFrame,
@@ -74,25 +98,9 @@ def build_fire_map(
     steps: int = 20,
     spread_fraction: float = 0.5,
 ) -> dict:
-    """Pick the peak fire-weather hour, derive the dryness field + mean wind, roll the CA out
-    from `seed_cell`, and return a twin `map` with a fuel-dryness and a fire-arrival layer."""
-    times = wx.select(pl.col("time").unique().sort()).to_series().to_list()
-    at = _peak_hour(wx, times)
-    dryness = dryness_field(wx, at)
-    wind_from = _circular_mean_deg(_at(wx, at, "wind_dir"))
-    speeds = _at(wx, at, "wind_speed")
-    wind_speed = sum(speeds) / max(len(speeds), 1)
-    # Normalise spread to the window's own mean fuel-dryness so the WIND-DRIVEN front is visible
-    # regardless of absolute (e.g. winter) magnitude. This shows the *relative* front shape, not
-    # absolute ignition — the instantaneous dryness proxy has no antecedent-drought (FWI) memory.
-    mean_dry = sum(dryness.values()) / max(len(dryness), 1)
-    denom = min(wind_speed / 40.0, 1.0) * mean_dry
-    base_rate = 1.0 / denom if denom > 0 else 0.0  # 0 wind or soaked fuel -> no spread
-    arrival = simulate(
-        {seed_cell}, dryness, wind_from, steps,
-        wind_speed=wind_speed, base_rate=base_rate, threshold=spread_fraction,
-    )
-
+    """Run the spread and wrap it as a twin `map` with a fuel-dryness and a fire-arrival layer."""
+    arrival, meta = spread_from_weather(wx, seed_cell, steps=steps, spread_fraction=spread_fraction)
+    at, dryness, wind_from, wind_speed = meta["at"], meta["dryness"], meta["wind_from"], meta["wind_speed"]
     label = at.strftime("%m-%d %H:%MZ")
     n_steps = max(arrival.values()) if arrival else 0
 
