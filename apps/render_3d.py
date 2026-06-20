@@ -52,7 +52,7 @@ _TEMPLATE = """<!DOCTYPE html>
   .ctl { margin-bottom: 9px; }
   .trow { display: flex; align-items: center; gap: 9px; }
   #time, #radius { flex: 1; accent-color: #ff5a3c; }
-  #tlabel, #rlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 92px; font-size: 11px; }
+  #tlabel, #dlabel, #rlabel { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 92px; font-size: 11px; }
   #btns { display: flex; gap: 8px; margin-top: 3px; }
   .btn, .mini { padding: 6px; cursor: pointer; color: #e8eaf2;
     background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16); border-radius: 7px;
@@ -102,8 +102,11 @@ _TEMPLATE = """<!DOCTYPE html>
     <div class="ctl"><label>&#9678; Radius</label>
       <div class="trow"><input id="radius" type="range" min="1" step="1" /><span id="rlabel"></span></div>
     </div>
+    <div class="ctl" id="daywrap"><label>&#128197; Day</label>
+      <div class="trow"><input id="day" type="range" min="0" value="0" step="1" /><span id="dlabel"></span></div>
+    </div>
     <div class="ctl"><label>&#9201; Time of day</label>
-      <div class="trow"><input id="time" type="range" min="0" value="0" step="1" /><span id="tlabel"></span></div>
+      <div class="trow"><input id="time" type="range" min="0" max="23" value="0" step="1" /><span id="tlabel"></span></div>
     </div>
     <div id="btns">
       <button id="play" class="btn">&#9654; Play</button>
@@ -149,6 +152,20 @@ _TEMPLATE = """<!DOCTYPE html>
   map.addControl(overlay);
 
   const slider = document.getElementById('time'), radius = document.getElementById('radius');
+  const daySlider = document.getElementById('day');
+  function frameDims() {  // split the active layer's hourly frames into (days, hoursPerDay)
+    const n = M().layers[layerIdx].frames.length;
+    return n > 24 ? { days: Math.ceil(n / 24), hours: 24 } : { days: 1, hours: n };
+  }
+  function syncSliders() {  // set Day/Time ranges + hide the Day row on single-day layers
+    const { days, hours } = frameDims();
+    daySlider.max = days - 1; slider.max = hours - 1;
+    document.getElementById('daywrap').style.display = days > 1 ? '' : 'none';
+  }
+  function fromSliders() {  // clamp guards a partial last day (frame count not a multiple of 24)
+    const { hours } = frameDims(), n = M().layers[layerIdx].frames.length;
+    setFrame(Math.min((+daySlider.value) * hours + (+slider.value), n - 1));
+  }
   const playBtn = document.getElementById('play');
   const dayBtn = document.getElementById('playday');  // loops the current day (24 hourly frames); hidden on single-day layers
   function syncDayBtn() {
@@ -198,12 +215,17 @@ _TEMPLATE = """<!DOCTYPE html>
       getRadius: d => 12 + 60 * d.risk, radiusUnits: 'meters', radiusMinPixels: 5,
       stroked: true, getLineColor: [10, 10, 10], lineWidthMinPixels: 1, pickable: true,
     })] });
-    document.getElementById('tlabel').textContent = F.label;
+    const parts = F.label.split(' \\u00b7 ');  // "YYYY · Mon DD · HH:MM" -> day label vs time label
+    document.getElementById('dlabel').textContent = parts.length > 2 ? parts.slice(0, 2).join(' \\u00b7 ') : '';
+    document.getElementById('tlabel').textContent = parts.length > 2 ? parts[2] : F.label;
     document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
   }
-  function setFrame(i) { frame = i; slider.value = i; render(); }
+  function setFrame(i) {  // i is the combined day*24+hour index; split it across the two sliders
+    const { hours } = frameDims();
+    frame = i; daySlider.value = Math.floor(i / hours); slider.value = i % hours; render();
+  }
 
   function renderRoster() {
     const plan = M().plan || [];
@@ -240,7 +262,7 @@ _TEMPLATE = """<!DOCTYPE html>
       .map(([g, opts]) => g ? `<optgroup label="${g}">${opts.join('')}</optgroup>` : opts.join('')).join('');
     center = [m.lon, m.lat]; marker.setLngLat(center); recompute();
     visRadius = +radius.max; radius.value = visRadius;
-    slider.max = m.layers[0].frames.length - 1; slider.value = 0; syncDayBtn();
+    syncSliders(); slider.value = 0; daySlider.value = 0; syncDayBtn();
     const lg = document.getElementById('legend'), catLegend = m.legend && m.legend.length;  // categorical swatches vs gradient
     lg.style.display = catLegend ? 'block' : 'none';
     document.getElementById('bar').style.display = catLegend ? 'none' : '';
@@ -254,7 +276,7 @@ _TEMPLATE = """<!DOCTYPE html>
   function selectLayer(i) {
     layerIdx = (i + M().layers.length) % M().layers.length;
     document.getElementById('layer').value = layerIdx;
-    slider.max = M().layers[layerIdx].frames.length - 1; setFrame(0); syncDayBtn();
+    syncSliders(); setFrame(0); syncDayBtn();
   }
   function stepTime(d) {
     const n = M().layers[layerIdx].frames.length; setFrame((frame + d + n) % n);
@@ -285,7 +307,8 @@ _TEMPLATE = """<!DOCTYPE html>
     else if (e.key === ';') stepTime(-1);  // arrows are left to MapLibre for panning
     else if (e.key === "'") stepTime(1);
   });
-  slider.addEventListener('input', e => setFrame(+e.target.value));
+  slider.addEventListener('input', fromSliders);
+  daySlider.addEventListener('input', fromSliders);
   radius.addEventListener('input', e => { visRadius = +e.target.value; render(); });
   document.getElementById('toggle').addEventListener('click', () => { extruded = !extruded; render(); });
   function tick() {  // 'day' loops the current day's 24 hourly frames; 'all' runs the whole window continuously
