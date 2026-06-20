@@ -26,6 +26,7 @@ from eval_fire import bbox
 from render_3d import to_self_contained_html
 
 from sctwin.adapters.cache import CachingAdapter
+from sctwin.adapters.elevation import fetch_elevation
 from sctwin.adapters.open_meteo import WEATHER_VARS, OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
 from sctwin.deploy import sample_roster
@@ -108,6 +109,7 @@ def main(
     margin: Annotated[float, typer.Option(help="km padding around the perimeter bbox")] = 1.2,
     basemap: Annotated[str, typer.Option(help="satellite or dark")] = "satellite",
     deploy_crew: Annotated[bool, typer.Option("--deploy/--no-deploy", help="overlay a personalised firefighter deployment that advances with the model front")] = True,
+    mask_water: Annotated[bool, typer.Option("--mask-water/--no-mask-water", help="drop sea-level (DEM ≤ 0) cells so the model can't predict fire over the ocean")] = True,
 ) -> None:
     """Render the animated fire-spread-vs-real-burn backtest as a self-contained 3D HTML."""
     gj = json.loads(perimeter.read_text())
@@ -117,6 +119,10 @@ def main(
     cells = cells_in_bbox(south - d, west - d, north + d, east + d, res)
     if not 0 < len(cells) <= MAX_CELLS:
         raise SystemExit(f"{len(cells)} cells — keep 1..{MAX_CELLS}; raise --res or shrink --margin")
+
+    if mask_water:  # DEM: drop ocean cells from the model + render universe so no fire over the Pacific
+        land = {h for h, e in fetch_elevation(cells).items() if e > 0.0}
+        cells = [c for c in cells if c.h3 in land]
 
     cached = CachingAdapter(OpenMeteoWeatherAdapter(variables=WEATHER_VARS), ".cache/open-meteo-fire")
     day = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
