@@ -125,3 +125,22 @@ def test_forecast_adapter_carries_fire_variables():
     assert fc.call_count == 1
     assert df["layer"].unique().to_list() == ["wind_dir"]
     assert df["value"].to_list() == [90.0]
+
+
+def test_retry_delay_prefers_retry_after_then_caps_backoff():
+    from sctwin.adapters.open_meteo import _BACKOFF_CAP, _retry_delay
+
+    assert _retry_delay(httpx.Response(429, headers={"Retry-After": "5"}), 0) == 5.0  # server hint wins
+    assert _retry_delay(httpx.Response(429), 3) == 8.0  # 2**3 exponential when no header
+    assert _retry_delay(httpx.Response(429, headers={"Retry-After": "999"}), 0) == _BACKOFF_CAP  # capped
+
+
+@respx.mock
+def test_fetch_backs_off_on_429_then_succeeds(monkeypatch):
+    slept: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+    ok = httpx.Response(200, json={"hourly": {"time": ["2020-01-01T00:00"], "temperature_2m": [4.5]}})
+    respx.get(ARCHIVE).mock(side_effect=[httpx.Response(429, headers={"Retry-After": "2"}), ok])
+
+    df = OpenMeteoWeatherAdapter().fetch([cell_of(51.5, -0.12, res=7)], datetime(2020, 1, 1), datetime(2020, 1, 1))
+    assert df.height == 1 and slept == [2.0]  # backed off once honouring Retry-After, then succeeded

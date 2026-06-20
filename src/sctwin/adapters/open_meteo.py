@@ -10,7 +10,18 @@ from sctwin.schema import empty_frame, validate_frame
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"  # reanalysis: past, decades back
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"  # real NWP: recent past + up to 16 days ahead
 _BATCH = 100  # Open-Meteo accepts many comma-separated coordinates per request
-_RETRIES = 4  # the free tier rate-limits by location count (429) — back off and retry
+_RETRIES = 6  # the free tier rate-limits by location count (429) — back off and retry
+_BACKOFF_CAP = 60.0  # cap a single backoff so a sustained 429 can't sleep unboundedly
+
+
+def _retry_delay(resp: httpx.Response, attempt: int) -> float:
+    """Seconds to wait before retrying a 429: honour the server's Retry-After header when present,
+    else exponential backoff (1, 2, 4, 8, 16). Both are capped at _BACKOFF_CAP (binds only on a
+    large Retry-After; plain backoff tops out at 16 s within _RETRIES)."""
+    after = resp.headers.get("Retry-After", "")
+    if after.replace(".", "", 1).isdigit():  # numeric seconds form (Open-Meteo doesn't send HTTP-date)
+        return min(float(after), _BACKOFF_CAP)
+    return min(2.0**attempt, _BACKOFF_CAP)
 
 # canonical layer -> Open-Meteo `hourly` variable. The fire-weather covariates a spread / Fire
 # Weather Index model needs: temperature, 10 m wind speed + direction, precipitation, humidity.
@@ -58,7 +69,7 @@ class OpenMeteoWeatherAdapter:
         for attempt in range(_RETRIES):
             resp = self._client.get(self._url, params=params)
             if resp.status_code == 429 and attempt < _RETRIES - 1:
-                time.sleep(2**attempt)  # 1, 2, 4 s backoff
+                time.sleep(_retry_delay(resp, attempt))
                 continue
             resp.raise_for_status()
             break
