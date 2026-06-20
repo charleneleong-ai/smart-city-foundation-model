@@ -8,5 +8,6 @@ __pycache__/
 *_3d.html
 *_3d.data/
 weather_map.html
+fire_backtest.png
 .cache/
 .era5/

@@ -44,6 +44,9 @@ _TEMPLATE = """<!DOCTYPE html>
   #bar { height: 9px; margin: 11px 0 4px;
     background: linear-gradient(90deg, rgb(0,40,255), rgb(140,40,160), rgb(255,40,0)); border-radius: 5px; }
   #scale { display: flex; justify-content: space-between; font-size: 11px; opacity: .82; }
+  #legend { margin: 9px 0 2px; display: none; }
+  #legend .lrow { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; opacity: .92; }
+  #legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 14px; border: 1px solid rgba(255,255,255,.3); }
   #about { font-size: 12px; opacity: .82; margin: 11px 0 0; }
   #controls { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 11px; }
   .ctl { margin-bottom: 9px; }
@@ -94,6 +97,7 @@ _TEMPLATE = """<!DOCTYPE html>
   </div>
   <div id="bar"></div>
   <div id="scale"><span id="vmin"></span><span id="vmax"></span></div>
+  <div id="legend"></div>
   <div id="controls">
     <div class="ctl"><label>&#9678; Radius</label>
       <div class="trow"><input id="radius" type="range" min="1" step="1" /><span id="rlabel"></span></div>
@@ -117,7 +121,7 @@ _TEMPLATE = """<!DOCTYPE html>
   let mapIdx = 0, layerIdx = 0, frame = 0, extruded = true;
   const map = new maplibregl.Map({
     container: 'map',
-    style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+    style: __BASEMAP_STYLE__,
     center: [MAPS[0].lon, MAPS[0].lat], zoom: MAPS[0].zoom, pitch: MAPS[0].pitch,
     bearing: __BEARING__, antialias: true,
   });
@@ -230,6 +234,12 @@ _TEMPLATE = """<!DOCTYPE html>
     center = [m.lon, m.lat]; marker.setLngLat(center); recompute();
     visRadius = +radius.max; radius.value = visRadius;
     slider.max = m.layers[0].frames.length - 1; slider.value = 0;
+    const lg = document.getElementById('legend'), catLegend = m.legend && m.legend.length;  // categorical swatches vs gradient
+    lg.style.display = catLegend ? 'block' : 'none';
+    document.getElementById('bar').style.display = catLegend ? 'none' : '';
+    document.getElementById('scale').style.display = catLegend ? 'none' : '';
+    if (catLegend) lg.innerHTML = m.legend.map(e =>
+      `<div class="lrow"><span class="sw" style="background:rgb(${e.color.slice(0, 3).join(',')})"></span>${e.label}</div>`).join('');
     render();
     renderRoster();
   }
@@ -283,6 +293,29 @@ _TEMPLATE = """<!DOCTYPE html>
 """
 
 
+# MapLibre basemap styles. "dark" = Carto vector style URL; "satellite" = Esri World Imagery
+# raster style object (xyz tiles use {z}/{y}/{x} — Esri's order, not the {z}/{x}/{y} default).
+# Both go through json.dumps in _basemap_style so the template's `style: __BASEMAP_STYLE__`
+# receives a valid JS literal (a quoted URL or an inline object).
+_DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+_SATELLITE_STYLE = {
+    "version": 8,
+    "sources": {
+        "esri": {
+            "type": "raster",
+            "tiles": ["https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+            "tileSize": 256,
+            "attribution": "Esri, Maxar, Earthstar Geographics",
+        }
+    },
+    "layers": [{"id": "esri", "type": "raster", "source": "esri"}],
+}
+
+
+def _basemap_style(basemap: str) -> str:
+    return json.dumps(_SATELLITE_STYLE if basemap == "satellite" else _DARK_STYLE)
+
+
 def _hex_ring(cell: str) -> list[list[float]]:
     ring = [[lng, lat] for lat, lng in h3.cell_to_boundary(cell)]
     ring.append(ring[0])
@@ -312,7 +345,7 @@ def _js_map(m: dict) -> dict:
     return {  # distance from the (movable) centre is computed client-side from each cell's "cen"
         "name": m["name"], "subtitle": m.get("subtitle", ""),
         "lat": m["lat"], "lon": m["lon"], "zoom": m["zoom"], "pitch": m.get("pitch", 50.0),
-        "elev": m.get("elevation_scale", 900.0),
+        "elev": m.get("elevation_scale", 900.0), "legend": m.get("legend", []),
         "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
         "plan": m.get("plan", []),  # per-firefighter deployment markers (empty for non-fire maps)
         "plan_frames": m.get("plan_frames"),  # optional per-frame crew positions (advance with the front)
@@ -324,7 +357,7 @@ _META_KEYS = ("name", "subtitle", "lat", "lon", "zoom", "pitch", "elev")
 
 def _fill(
     maps_json: list[dict], *, title: str, about: str, bearing: float, map_label: str, data_dir: str,
-    group_label: str, group_options: list[str] | None, stride: int | None,
+    group_label: str, group_options: list[str] | None, stride: int | None, basemap: str = "dark",
 ) -> str:
     stride = stride or len(maps_json)  # maps per outer (year) group; default = single group
     years = group_options or []
@@ -343,6 +376,7 @@ def _fill(
         "__TITLE__": title,
         "__ABOUT__": about,
         "__DATA_DIR__": data_dir,
+        "__BASEMAP_STYLE__": _basemap_style(basemap),
     }
     html = _TEMPLATE
     for k, v in repl.items():
@@ -353,6 +387,7 @@ def _fill(
 def to_self_contained_html(
     maps: list[dict], *, title: str = "sctwin", about: str = "", bearing: float = 18.0, map_label: str = "Domain",
     group_label: str = "Year", group_options: list[str] | None = None, stride: int | None = None,
+    basemap: str = "dark",
 ) -> str:
     """Render named maps as a self-contained 3D viewer with map/layer/time selectors.
 
@@ -363,7 +398,7 @@ def to_self_contained_html(
     (inner maps per outer group, year-major) and `group_options` (e.g. the year labels).
     """
     return _fill([_js_map(m) for m in maps], title=title, about=about, bearing=bearing, map_label=map_label,
-                 data_dir="", group_label=group_label, group_options=group_options, stride=stride)
+                 data_dir="", group_label=group_label, group_options=group_options, stride=stride, basemap=basemap)
 
 
 def to_lazy_html(

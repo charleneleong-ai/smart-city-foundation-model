@@ -18,6 +18,7 @@ forecast = ["scikit-learn>=1.4"]
 app = ["fastapi>=0.115", "uvicorn>=0.32"]
 gridded = ["ecmwf-datastores-client>=0.4", "xarray>=2024.1", "netcdf4>=1.6"]
 tsfm = ["chronos-forecasting>=1.5", "pandas>=2.0", "pyarrow>=16.0"]  # Chronos-2 time-series FM
+viz = ["matplotlib>=3.8"]  # static backtest plots (apps/viz_fire.py)
 
 [build-system]
 requires = ["hatchling"]
