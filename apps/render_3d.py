@@ -189,8 +189,8 @@ _TEMPLATE = """<!DOCTYPE html>
       // per-frame crew (advance with the front) if provided, else the static plan
       id: 'crew', data: ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []),
       getPosition: d => [d.lon, d.lat], getFillColor: d => d.color,
-      getRadius: d => 12 + 60 * d.risk, radiusUnits: 'meters', radiusMinPixels: 5,
-      stroked: true, getLineColor: [10, 10, 10], lineWidthMinPixels: 1, pickable: true,
+      getRadius: d => 40 + 120 * d.risk, radiusUnits: 'meters', radiusMinPixels: 9, radiusMaxPixels: 60,
+      stroked: true, getLineColor: [255, 255, 255], lineWidthMinPixels: 2, pickable: true,
     }), new deck.TextLayer({
       // on-map label per deployed firefighter so a specific member is identifiable at a glance
       id: 'crew-labels', data: ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []),
