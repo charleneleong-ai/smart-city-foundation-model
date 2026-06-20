@@ -203,10 +203,10 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
     s = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
     wx = _weather(cells, s, s + timedelta(days=days - 1))
 
-    # Inputs: observed weather (first day, 24 h)
-    day1 = wx.filter(pl.col("time") < s + timedelta(days=1))
-    hours = day1.select(pl.col("time").unique().sort()).to_series().to_list()
-    hdd = day1.with_columns(pl.max_horizontal(18.0 - pl.col("value"), 0.0).alias("value"))
+    # Inputs: observed weather over the full window — Play steps day-by-day, hourly (window is always
+    # multi-day; the forecast's 24 h lag needs >1 day), so frame labels carry the date.
+    times = wx.select(pl.col("time").unique().sort()).to_series().to_list()
+    hdd = wx.with_columns(pl.max_horizontal(18.0 - pl.col("value"), 0.0).alias("value"))
 
     def wlayer(nm: str, f: pl.DataFrame) -> dict:
         vmin, vmax = float(f["value"].min()), float(f["value"].max())
@@ -215,7 +215,7 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
             "unit": "°C",
             "group": "Inputs",
             "mode": "auto",
-            "frames": _frames(f, hours, vmin, vmax, "%H:%M"),
+            "frames": _frames(f, times, vmin, vmax, "%m-%d %H:%M"),
         }
 
     # Output 1: weather forecast (predict t2m from calendar + its own lags)
@@ -225,17 +225,17 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
     weather_out = _verify_layers(wres, _WEATHER_FC_LAYERS, "Weather forecast")
 
     # Output 2: energy demand forecast (synthetic load from weather features)
+    load_w = _synth_load(wx, r)  # reused for the intervention below (deterministic — same frame)
     eres = verification_frame(
-        GBMForecaster(), build_supervised(_synth_load(wx, r), wx), FEATURE_COLS, alpha=0.1
+        GBMForecaster(), build_supervised(load_w, wx), FEATURE_COLS, alpha=0.1
     )
     energy_out = _verify_layers(eres, _ENERGY_LAYERS, "Energy forecast")
 
     # Output 2b: intervention counterfactual — the Δ a planner acts on, not a forecast. A retrofit
     # cuts the heating-driven part of load, so the Δ surface is largest in the coldest cells/hours.
-    load1 = _synth_load(day1, r)
-    cf1 = counterfactual_grid(load1, day1, kind="retrofit", factor=_RETROFIT_FACTOR)
-    delta1 = (
-        load1.join(cf1.select("cell", "time", pl.col("value").alias("after")), on=["cell", "time"])
+    cf_w = counterfactual_grid(load_w, wx, kind="retrofit", factor=_RETROFIT_FACTOR)
+    delta_w = (
+        load_w.join(cf_w.select("cell", "time", pl.col("value").alias("after")), on=["cell", "time"])
         .with_columns((pl.col("after") - pl.col("value")).alias("value"))  # Δ = after − before
         .select("cell", "time", "layer", "value")
     )
@@ -247,12 +247,12 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
             "unit": "load",
             "group": "Intervention (retrofit)",
             "mode": mode,
-            "frames": _frames(f, hours, vmin, vmax, "%H:%M"),
+            "frames": _frames(f, times, vmin, vmax, "%m-%d %H:%M"),
         }
 
     intervention_out = [
-        ivlayer("Δ demand (retrofit)", delta1, "sym"),  # diverging: where/when the retrofit bites
-        ivlayer("demand after retrofit", cf1, "zero"),
+        ivlayer("Δ demand (retrofit)", delta_w, "sym"),  # diverging: where/when the retrofit bites
+        ivlayer("demand after retrofit", cf_w, "zero"),
     ]
 
     # Output 3: EV-charging demand surface — the physical-AI consumable (fleet routing, depot siting)
@@ -262,13 +262,13 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
     ev_out = _verify_layers(evres, _EV_LAYERS, "EV charging")
 
     w_mae, e_mae = float(wres["abs_error"].mean()), float(eres["abs_error"].mean())
-    iv_mean = float(delta1["value"].mean())  # mean load cut by the retrofit (negative)
+    iv_mean = float(delta_w["value"].mean())  # mean load cut by the retrofit (negative)
     return {
         "name": name,
         "subtitle": f"{start} · forecast MAE — weather {w_mae:.1f}°C · energy {e_mae:.1f} · retrofit Δ {iv_mean:.1f}",
         **_view(preset, zoom, r),
         "layers": [
-            wlayer("temperature", day1),
+            wlayer("temperature", wx),
             wlayer("heating degrees", hdd),
             *weather_out,
             *energy_out,
