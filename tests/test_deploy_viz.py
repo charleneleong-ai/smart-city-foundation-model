@@ -14,7 +14,7 @@ def test_downwind_alignment_peaks_downwind_zero_upwind():
 
 
 def test_hazard_surface_has_three_layers_and_dose_tracks_smoke():
-    surf = hazard_surface(SCN, res=8, rings=2)
+    surf = hazard_surface(SCN, rings=2)
     assert set(surf["layer"].unique().to_list()) == {"smoke", "heat", "dose"}
     smoke = surf.filter(surf["layer"] == "smoke").sort("cell")["value"].to_list()
     dose = surf.filter(surf["layer"] == "dose").sort("cell")["value"].to_list()

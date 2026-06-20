@@ -29,7 +29,7 @@ def _bearing(src: str, dst: str) -> float:
     return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
 
 
-def hazard_surface(scenario: FireScenario, res: int, rings: int = 2) -> pl.DataFrame:
+def hazard_surface(scenario: FireScenario, rings: int = 2) -> pl.DataFrame:
     """smoke / heat / dose per H3 cell over the incident's k-ring — smoke skewed downwind, decaying."""
     incident = scenario.cell
     rows: list[dict] = []
@@ -72,9 +72,9 @@ def crew_records(plan: Plan, roster: Roster, scenario: FireScenario) -> list[dic
     return recs
 
 
-def deploy_map(scenario: FireScenario, plan: Plan, roster: Roster, *, preset: dict, res: int = 8, rings: int = 2) -> dict:
+def deploy_map(scenario: FireScenario, plan: Plan, roster: Roster, *, preset: dict, rings: int = 2) -> dict:
     """Map payload for `to_self_contained_html`: a Fire domain (smoke/heat/dose hexes) + `plan` markers."""
-    surf = hazard_surface(scenario, res, rings)
+    surf = hazard_surface(scenario, rings)
 
     def layer(nm: str, lyr: str) -> dict:
         f = surf.filter(pl.col("layer") == lyr)
@@ -82,6 +82,7 @@ def deploy_map(scenario: FireScenario, plan: Plan, roster: Roster, *, preset: di
         return {"name": nm, "unit": "", "group": "Fire", "vmin": vmin, "vmax": vmax,
                 "frames": [{"label": "now", "records": h3_layer_records(f, _T0, vmin=vmin, vmax=vmax)}]}
 
+    res = h3.get_resolution(scenario.cell)
     edge = 4.0 * h3.average_hexagon_edge_length(res, unit="m")
     return {
         "name": preset.get("name", "Fire"),

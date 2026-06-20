@@ -25,7 +25,9 @@ class Assignment:
 
 @dataclass(frozen=True)
 class Plan:
-    assignments: list[Assignment]
+    """A deployment plan. `assignments` covers the FULL roster — every firefighter gets an assignment (BA or staging)."""
+
+    assignments: tuple[Assignment, ...]
     total_risk: float
     max_individual_risk: float
     per_ff_risk: dict[str, RiskScore] = field(default_factory=dict)
@@ -51,7 +53,7 @@ def _plan_for(
         per_ff[ff.id] = score
     total = sum(s.value for s in per_ff.values())
     worst = max((s.value for s in per_ff.values()), default=0.0)
-    return Plan(assignments, total, worst, per_ff, feasible=capacity >= c.required_capacity)
+    return Plan(tuple(assignments), total, worst, per_ff, feasible=capacity >= c.required_capacity)
 
 
 def recommend(
