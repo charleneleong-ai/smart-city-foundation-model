@@ -42,6 +42,18 @@ def test_build_fire_map_does_not_spread_when_soaked():
     assert burned == {SEED}  # drenched fuel -> only the seed burns, no spread
 
 
+def test_build_fire_map_overlays_deployment_at_ignition_when_roster_given():
+    from sctwin.deploy import Constraints, sample_roster
+
+    at = datetime(2025, 1, 7, 18, tzinfo=timezone.utc)
+    roster = sample_roster()
+    m = build_fire_map("LA", _frame(at), PRESET, zoom=10.0, res=8, seed_cell=SEED, steps=3,
+                       roster=roster, constraints=Constraints(required_capacity=3.0))
+    assert {r["ff_id"] for r in m["plan"]} == {f.id for f in roster}  # every firefighter overlaid
+    slat, slon = h3.cell_to_latlng(SEED)  # crew deploy at the ignition point, on top of the fire
+    assert any(abs(r["lat"] - slat) < 0.02 and abs(r["lon"] - slon) < 0.02 for r in m["plan"])
+
+
 def test_spread_frames_animate_growing_front_and_scar():
     from demo_fire import _spread_frames
 

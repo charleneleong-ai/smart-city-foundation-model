@@ -28,8 +28,13 @@ from sctwin.adapters.open_meteo import (
 )
 from sctwin.app.cells import cells_in_bbox
 from sctwin.app.render import h3_layer_records
+from sctwin.deploy import Constraints, FireScenario, deploy, sample_roster
+from sctwin.deploy.roster import Roster
+from sctwin.deploy.viz import crew_records
 from sctwin.fire import dryness_field, simulate
 from sctwin.geo import cell_of
+
+_WILDFIRE_PM25 = 180.0  # representative heavy wildfire-smoke PM2.5 (the CA has no smoke channel)
 
 MAX_CELLS = 1000  # Open-Meteo batches ~100 coords/request and rate-limits by location count
 _ABOUT = (
@@ -124,8 +129,12 @@ def build_fire_map(
     seed_cell: str,
     steps: int = 20,
     spread_fraction: float = 0.5,
+    roster: Roster | None = None,
+    constraints: Constraints | None = None,
 ) -> dict:
-    """Run the spread and wrap it as a twin `map` with a fuel-dryness and a fire-arrival layer."""
+    """Run the spread and wrap it as a twin `map` (fuel-dryness + fire-arrival + animated spread).
+    If a `roster` is given, also overlay a personalised firefighter deployment (crew markers +
+    roster panel) at the ignition point, scored against this fire's own wind/heat conditions."""
     arrival, meta = spread_from_weather(wx, seed_cell, steps=steps, spread_fraction=spread_fraction)
     at, dryness, wind_from, wind_speed = meta["at"], meta["dryness"], meta["wind_from"], meta["wind_speed"]
     label = at.strftime("%m-%d %H:%MZ")
@@ -138,7 +147,7 @@ def build_fire_map(
         recs = h3_layer_records(df, at=at, vmin=0.0, vmax=vmax) if field else []
         return {"name": layer_name, "unit": unit, "frames": [{"label": label, "records": recs}]}
 
-    return {
+    m = {
         "name": name,
         "subtitle": f"peak {label} · wind from {wind_from:.0f}° @ {wind_speed:.0f} km/h · "
         f"{len(arrival)}/{len(dryness)} cells burned in {n_steps} steps",
@@ -150,6 +159,16 @@ def build_fire_map(
              "frames": _spread_frames(list(dryness), arrival, n_steps, at)},  # animated burn front (slider)
         ],
     }
+    if roster is not None:
+        temps = _at(wx, at, "t2m")
+        scenario = FireScenario(
+            cell=seed_cell, fire_type="grass", size=float(n_steps or 1), pm25=_WILDFIRE_PM25,
+            temp_c=sum(temps) / max(len(temps), 1), wind_speed=wind_speed, wind_dir=wind_from,
+            duration_min=240.0,
+        )
+        plan = deploy(scenario, roster, constraints or Constraints(required_capacity=4.0))
+        m["plan"] = crew_records(plan, roster, scenario)  # crew markers + roster panel over the fire
+    return m
 
 
 def main(
@@ -162,6 +181,7 @@ def main(
     source: Annotated[str, typer.Option(help="open-meteo (archive) or open-meteo-forecast")] = "open-meteo",
     seed_lat: Annotated[float | None, typer.Option(help="ignition latitude (default: preset centre)")] = None,
     seed_lon: Annotated[float | None, typer.Option(help="ignition longitude")] = None,
+    deploy_crew: Annotated[bool, typer.Option("--deploy/--no-deploy", help="overlay a personalised firefighter deployment at the ignition point")] = True,
 ) -> None:
     """Pull LA weather, derive fuel dryness, run the macro CA spread, render to 3D HTML."""
     if city not in PRESETS:
@@ -189,11 +209,14 @@ def main(
     m = build_fire_map(
         f"{city.upper()} macro fire spread", wx, preset, zoom, r,
         seed_cell=seed, steps=steps, spread_fraction=spread,
+        roster=sample_roster() if deploy_crew else None,
     )
-    html = to_self_contained_html([m], title=f"{city.upper()} — macro fire spread", about=_ABOUT)
+    suffix = " + firefighter deployment" if deploy_crew else ""
+    html = to_self_contained_html([m], title=f"{city.upper()} — macro fire spread{suffix}", about=_ABOUT)
     out = Path(f"{city}_fire_3d.html")
     out.write_text(html)
-    print(f"wrote {out} — {m['subtitle']}")
+    crew = f" · {len(m['plan'])} crew deployed" if "plan" in m else ""
+    print(f"wrote {out} — {m['subtitle']}{crew}")
 
 
 if __name__ == "__main__":
