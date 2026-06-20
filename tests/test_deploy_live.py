@@ -32,5 +32,7 @@ def test_from_live_pulls_wind_and_temp_from_adapter():
         cell.h3, res=7, fire_type="grass", size=4.0, duration_min=180.0, pm25=120.0,
         when=datetime(2026, 6, 20), adapter=OpenMeteoForecastAdapter(variables=WEATHER_VARS),
     )
-    assert scn.temp_c == 36.0 and scn.wind_speed == 11.0 and scn.wind_dir == 70.0
+    assert scn.temp_c == 36.0
+    assert scn.wind_speed == 11.0
+    assert scn.wind_dir == 70.0
     assert scn.cell == cell.h3 and scn.pm25 == 120.0

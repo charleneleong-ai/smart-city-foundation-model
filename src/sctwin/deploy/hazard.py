@@ -51,7 +51,7 @@ class FireScenario:
         from sctwin.geo import Cell
 
         df = adapter.fetch([Cell(h3=cell_h3, res=res)], when, when)
-        latest = df.sort("time").group_by("layer").last()
+        latest = df.sort("time").group_by("layer", maintain_order=True).last()
         vals = dict(zip(latest["layer"].to_list(), latest["value"].to_list()))
         return cls(
             cell=cell_h3,
