@@ -33,16 +33,28 @@ uv run pytest -q                     # full test suite
 
 ## Twin viewer (3D H3 + deck.gl + MapLibre)
 
-Self-contained 3D WebGL map (extruded hexes, dark basemap, no token — opens from `file://`)
-with three nested selectors — **Domain** (Weather, Energy, …), **Layer**, and a **time**
-slider — plus an in-map **radius** slider (filters preloaded cells, no re-fetch), Play, and
-2D/3D toggle. Hovering a hex shows *all* layers at once (e.g. demand vs forecast vs error).
+3D WebGL map (extruded hexes, dark basemap, no token) with independent time controls — **Year**,
+**Month** (filtered to each year's available months), **Day**, and a **Time-of-day** slider — plus
+a **Domain**/**Layer** picker, an in-map **radius** slider (filters preloaded cells, no re-fetch),
+**Play** (continuous) and **Day** (loop one day) autoplay, and a 2D/3D toggle. Selecting a layer
+shows a one-line explanation in the top-right info box; colour **and** hex height both encode the
+value (taller & brighter = higher). Hovering a hex shows *all* layers at once (demand vs forecast).
 
 ```bash
-mise run twin                                      # full UK twin -> uk_twin_3d.html
-uv run --extra forecast python apps/demo_twin.py --city london --radius 30 --res 8
-open uk_twin_3d.html
+# single snapshot — opens straight from file://
+uv run --extra forecast python apps/demo_twin.py --city london --date 2025-04-01 --months none --days 5 --inline
+open london_twin_3d.html
+
+# multi-year, every month to-date — full Year/Month/Day/Time navigation
+uv run --extra forecast python apps/demo_twin.py --city london --years 2023-2026 --months all --days 5
+python -m http.server 8001    # lazy build (small shell + per-month JSON); then open the URL below
+open http://localhost:8001/london_twin_3d.html
 ```
+
+`--years 2023-2026` includes the current *partial* year (future months are dropped automatically);
+`--days N` sets the continuous Play window. Multi-month builds are written **lazily** (per-map JSON
+fetched on demand) so they stay snappy — serve those over `http`, not `file://`. Single-snapshot or
+small builds can use `--inline` to open directly. `mise run twin` still builds the full UK twin.
 
 - **Weather domain:** 2 m temperature, heating degrees.
 - **Energy domain:** demand (`y_true`), forecast (`y_pred`), |error|, delta (diverging), coverage —
