@@ -122,6 +122,7 @@ _TEMPLATE = """<!DOCTYPE html>
   const NYEARS = MAPS.length / STRIDE;
   const monthOf = i => i % STRIDE, yearOf = i => Math.floor(i / STRIDE);
   let mapIdx = 0, layerIdx = 0, frame = 0, extruded = true, crewVisible = true;
+  let frameF = 0, syncClock = null;  // fractional frame for smooth burn interpolation; operator clock when synced
   const map = new maplibregl.Map({
     container: 'map',
     style: __BASEMAP_STYLE__,
@@ -189,25 +190,22 @@ _TEMPLATE = """<!DOCTYPE html>
   // Follow the operator clock: while the server runs the sim, mirror its step on the map so the fire
   // animation, the operator panel, and the Fire-Shield app all play in lockstep.
   let syncedToServer = false;
-  let mcs = { minute: 360, rate: 2, playing: false, t: 0 };
+  let mcs = { minute: 360, rate: 2, playing: false, t: 0, start: 360, span: 180, maxstep: 1 };
   const mfmt = m => { m = Math.max(0, Math.round(m)); return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
-  setInterval(() => {  // smooth local clock tick while synced to the operator
-    if (syncedToServer) {
-      const m = mcs.minute + (mcs.playing ? mcs.rate * (performance.now() - mcs.t) / 1000 : 0);
-      document.getElementById('tlabel').textContent = mfmt(m);
-    }
-  }, 100);
+  setInterval(() => {  // smooth local loop: interpolate the minute -> fractional frame -> fluid burn + clock
+    if (!syncedToServer) return;
+    const minute = mcs.minute + (mcs.playing ? mcs.rate * (performance.now() - mcs.t) / 1000 : 0);
+    frameF = mcs.span ? ((minute - mcs.start) / mcs.span) * mcs.maxstep : frameF;
+    syncClock = mfmt(minute);
+    render();
+  }, 80);
   setInterval(async () => {
     try {
       const s = await (await fetch(FEED_SERVER + '/state')).json();
-      mcs = { minute: s.minute, rate: s.minPerSec || 2, playing: s.playing, t: performance.now() };  // resync
-      const wantCrew = s.deployedYet !== false;  // crew hidden until ~15 min into the fire
-      const crewChanged = wantCrew !== crewVisible; crewVisible = wantCrew;
-      if (s.playing) {
-        const f = Math.min(Math.round(s.step), M().layers[layerIdx].frames.length - 1);
-        if (f !== frame || crewChanged) setFrame(f);
-        if (!syncedToServer) { syncedToServer = true; toast('\\u25b6 synced to operator clock \\u2014 ' + (s.clock || '')); }
-      } else { if (crewChanged) render(); syncedToServer = false; }
+      mcs = { minute: s.minute, rate: s.minPerSec || 2, playing: s.playing, t: performance.now(),
+              start: s.dayStartMin || 360, span: s.daySpanMin || 180, maxstep: s.maxstep };  // resync
+      crewVisible = s.deployedYet !== false;  // crew hidden until ~15 min into the fire
+      if (!syncedToServer) { syncedToServer = true; toast('\\u25b6 synced to operator clock \\u2014 ' + (s.clock || '')); }
     } catch (e) { syncedToServer = false; }
   }, 1000);
 
@@ -215,11 +213,21 @@ _TEMPLATE = """<!DOCTYPE html>
     const mins = Math.round(360 + (step / Math.max(total, 1)) * 180);
     return String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
   }
-  function render() {
-    const m = M(), L = m.layers[layerIdx], F = L.frames[frame];
+    function render() {
+    const m = M(), L = m.layers[layerIdx];
+    const last = L.frames.length - 1;
+    const ff = Math.max(0, Math.min(frameF, last));   // fractional frame -> interpolate the burn between CA steps
+    const lo = Math.floor(ff), hi = Math.min(lo + 1, last), t = ff - lo;
+    const A = L.frames[lo], B = L.frames[hi];
+    frame = Math.round(ff);  // keep an integer frame for the tooltip / crew / slider
     const data = [];
     m.cells.forEach((c, i) => {  // cells within visRadius km of the (movable) centre — radius follows the click
-      if (cellDist[i] <= visRadius) data.push({ idx: i, polygon: c.polygon, value: F.v[i], color: F.c[i], height: F.h[i] });
+      if (cellDist[i] <= visRadius) {
+        const a = A.c[i], b = B.c[i];
+        data.push({ idx: i, polygon: c.polygon, value: A.v[i] + (B.v[i] - A.v[i]) * t,
+          color: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t],
+          height: A.h[i] + (B.h[i] - A.h[i]) * t });
+      }
     });
     overlay.setProps({ layers: [new deck.PolygonLayer({
       id: 'hex', data, extruded, filled: true, wireframe: false,
@@ -228,7 +236,7 @@ _TEMPLATE = """<!DOCTYPE html>
       opacity: extruded ? 0.86 : 0.7, pickable: true,
       onClick: info => { if (info.coordinate) setCenter(info.coordinate); },
       material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
-      updateTriggers: { getFillColor: [mapIdx, layerIdx, frame], getElevation: [mapIdx, layerIdx, frame, extruded] },
+      updateTriggers: { getFillColor: [mapIdx, layerIdx, ff], getElevation: [mapIdx, layerIdx, ff, extruded] },
     }), new deck.ScatterplotLayer({
       // per-frame crew (advance with the front) if provided, else the static plan — hidden until deploy time
       id: 'crew', data: crewVisible ? ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []) : [],
@@ -245,13 +253,12 @@ _TEMPLATE = """<!DOCTYPE html>
       background: true, getBackgroundColor: [10, 10, 10, 205], backgroundPadding: [4, 2], pickable: false,
       parameters: { depthTest: false },  // labels also float above the fire
     })] });
-    const lastFrame = L.frames.length - 1;
-    document.getElementById('tlabel').textContent = lastFrame > 0 ? clockOf(frame, lastFrame) : F.label;
+    document.getElementById('tlabel').textContent = syncClock || (last > 0 ? clockOf(ff, last) : A.label);
     document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
   }
-  function setFrame(i) { frame = i; slider.value = i; render(); }
+  function setFrame(i) { frameF = i; frame = i; syncClock = null; slider.value = i; render(); }
 
   function renderRoster() {
     const plan = M().plan || [];
