@@ -96,6 +96,23 @@ def _weather(cells: list, start: datetime, end: datetime) -> pl.DataFrame:
 
 _TS_FMT = "%Y · %b %d · %H:%M"  # slider readout: year · month day · time-of-day
 
+# one-line "what is this layer" notes, shown in the viewer when a layer is selected
+_INPUT_DESC = {
+    "temperature": "air temperature 2 m above ground",
+    "heating degrees": "heating-demand proxy: degrees below 18°C, max(18−T, 0) — higher = colder = more heating",
+}
+_VERIFY_DESC = {  # the common verification fields, shared by the weather / energy / EV forecast groups
+    "y_true": "observed value (the ground truth)",
+    "y_pred": "model forecast",
+    "abs_error": "absolute error, |forecast − actual|",
+    "error": "signed error, forecast − actual",
+    "covered": "did the actual land inside the 90% prediction interval? (split-conformal coverage)",
+}
+_IV_DESC = {
+    "Δ demand (retrofit)": "change in demand from the retrofit (after − before); most negative where it cuts most",
+    "demand after retrofit": "modelled demand once the retrofit is applied",
+}
+
 
 def _frames(frame: pl.DataFrame, times: list, vmin: float, vmax: float, fmt: str) -> list[dict]:
     return [
@@ -171,6 +188,7 @@ def _verify_layers(results: pl.DataFrame, specs: list, group: str) -> list[dict]
                 "unit": unit,
                 "group": group,
                 "mode": mode,
+                "desc": _VERIFY_DESC.get(field, ""),
                 "frames": _frames(fl, times, vmin, vmax, _TS_FMT),
             }
         )
@@ -218,6 +236,7 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
             "unit": "°C",
             "group": "Inputs",
             "mode": "auto",
+            "desc": _INPUT_DESC.get(nm, ""),
             "frames": _frames(f, times, vmin, vmax, _TS_FMT),
         }
 
@@ -250,6 +269,7 @@ def twin_map(name: str, preset: dict, start: str, days: int, *, radius=None, res
             "unit": "load",
             "group": "Intervention (retrofit)",
             "mode": mode,
+            "desc": _IV_DESC.get(nm, ""),
             "frames": _frames(f, times, vmin, vmax, _TS_FMT),
         }
 

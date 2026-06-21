@@ -45,6 +45,7 @@ _TEMPLATE = """<!DOCTYPE html>
     background: linear-gradient(90deg, rgb(0,40,255), rgb(140,40,160), rgb(255,40,0)); border-radius: 5px; }
   #scale { display: flex; justify-content: space-between; font-size: 11px; opacity: .82; }
   #scalehint { font-size: 10px; opacity: .6; margin: 2px 0 0; }
+  #ldesc { font-size: 11px; opacity: .7; margin: 4px 0 0; line-height: 1.35; }
   #legend { margin: 9px 0 2px; display: none; }
   #legend .lrow { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; opacity: .92; }
   #legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 14px; border: 1px solid rgba(255,255,255,.3); }
@@ -95,6 +96,7 @@ _TEMPLATE = """<!DOCTYPE html>
   </div>
   <div id="layerwrap"><label>Layer</label>
     <div class="srow"><button id="lprev" class="mini">&#10094;</button><select id="layer"></select><button id="lnext" class="mini">&#10095;</button></div>
+    <div id="ldesc"></div>
   </div>
   <div id="bar"></div>
   <div id="scale"><span id="vmin"></span><span id="vmax"></span></div>
@@ -233,6 +235,7 @@ _TEMPLATE = """<!DOCTYPE html>
     document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
+    document.getElementById('ldesc').textContent = L.desc || '';
   }
   function setFrame(i) {  // i is the combined day*24+hour index; split it across the two sliders
     const { hours } = frameDims();
@@ -407,6 +410,7 @@ def _js_layer(layer: dict) -> dict:
     ]
     vals = [v for f in frames for v in f["v"]] or [0.0]
     return {"name": layer["name"], "unit": layer.get("unit", ""), "group": layer.get("group", ""),
+            "desc": layer.get("desc", ""),
             "vmin": layer.get("vmin", min(vals)), "vmax": layer.get("vmax", max(vals)), "frames": frames}
 
 

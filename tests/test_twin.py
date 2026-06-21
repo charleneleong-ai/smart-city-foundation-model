@@ -39,6 +39,11 @@ def test_input_layers_animate_the_full_multiday_window(monkeypatch):
     assert len(temp["frames"]) == 72  # 3 days × 24 h continuous (was a single 24 h day)
     assert "2025" in temp["frames"][-1]["label"]  # multi-day window -> labels carry year · month day · time
 
+    # each layer carries a one-line explanation; temperature vs heating-degrees read differently
+    assert "2 m" in temp["desc"]
+    hdd = next(L for L in m["layers"] if L["name"] == "heating degrees")
+    assert "18" in hdd["desc"] and "heating" in hdd["desc"].lower()
+
     iv = next(L for L in m["layers"] if L["group"].startswith("Intervention"))
     assert len(iv["frames"]) == 72  # intervention surface spans the same window, not just day 1
 
