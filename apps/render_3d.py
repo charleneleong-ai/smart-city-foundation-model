@@ -200,6 +200,10 @@ _TEMPLATE = """<!DOCTYPE html>
     } catch (e) { syncedToServer = false; }
   }, 600);
 
+  function clockOf(step, total) {  // map a CA step to a wall clock over an 06:00-20:00 operational day
+    const mins = Math.round(360 + (step / Math.max(total, 1)) * 840);
+    return String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
+  }
   function render() {
     const m = M(), L = m.layers[layerIdx], F = L.frames[frame];
     const data = [];
@@ -230,7 +234,9 @@ _TEMPLATE = """<!DOCTYPE html>
       background: true, getBackgroundColor: [10, 10, 10, 205], backgroundPadding: [4, 2], pickable: false,
       parameters: { depthTest: false },  // labels also float above the fire
     })] });
-    document.getElementById('tlabel').textContent = F.label;
+    const lastFrame = L.frames.length - 1;
+    document.getElementById('tlabel').textContent = lastFrame > 0
+      ? (clockOf(frame, lastFrame) + ' \\u00b7 ' + F.label) : F.label;
     document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
