@@ -153,9 +153,8 @@ def create_app(perimeter: Path) -> FastAPI:
 
     @app.post("/reset")
     def reset() -> dict:
-        state["playing"] = False
-        state["minute"] = float(_DAY_START_MIN)
-        return {"clock": mmclock(state["minute"])}
+        state["minute"] = float(_DAY_START_MIN)  # rewind to the day start; keep playing so it starts again
+        return {"clock": mmclock(state["minute"]), "playing": state["playing"]}
 
     @app.get("/", response_class=HTMLResponse)
     def panel() -> str:

@@ -351,7 +351,16 @@ _TEMPLATE = """<!DOCTYPE html>
     else if (e.key === ';') stepTime(-1);  // arrows are left to MapLibre for panning
     else if (e.key === "'") stepTime(1);
   });
-  slider.addEventListener('input', e => setFrame(+e.target.value));
+  slider.addEventListener('input', e => {
+    const i = +e.target.value;
+    if (syncedToServer) {  // scrub the whole synced sim — drag to the left edge to restart at the day start
+      const minute = mcs.start + (mcs.maxstep ? (i / mcs.maxstep) : 0) * mcs.span;
+      fetch(FEED_SERVER + '/seek?minute=' + Math.round(minute), { method: 'POST' });
+      frameF = i; render();  // instant visual feedback; the sync loop picks it up from the server
+    } else {
+      setFrame(i);
+    }
+  });
   radius.addEventListener('input', e => { visRadius = +e.target.value; render(); });
   document.getElementById('toggle').addEventListener('click', () => { extruded = !extruded; render(); });
   playBtn.addEventListener('click', () => {
