@@ -95,3 +95,12 @@ def test_categorical_legend_embeds_swatches():
     assert '"label": "hot"' in html  # legend data embedded
     assert "m.legend" in html and 'class="sw"' in html  # swatch render wired in the viewer
     assert '"legend": []' in to_self_contained_html([_map("m2", [_layer("t", [_frame("00:00", 1.0)])])])  # default empty
+
+
+def test_dated_maps_embed_ym_for_the_year_month_picker():
+    a = {**_map("Jun 2025", [_layer("t", [_frame("2025 · Jun 01 · 00:00", 4.5)])]), "ym": "2025-06"}
+    b = {**_map("Jan 2026", [_layer("t", [_frame("2026 · Jan 01 · 00:00", 3.0)])]), "ym": "2026-01"}
+    html = to_self_contained_html([a, b])
+    assert '"ym": "2025-06"' in html and '"ym": "2026-01"' in html  # per-map year-month embedded
+    assert "const byYear" in html and "const DATED" in html  # data-driven Year+Month picker wired in
+    assert '"ym": ""' in to_self_contained_html([_map("m", [_layer("t", [_frame("a", 1.0)])])])  # undated default

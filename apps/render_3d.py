@@ -122,6 +122,16 @@ _TEMPLATE = """<!DOCTYPE html>
   const STRIDE = __STRIDE__;  // maps per outer axis (months per year); MAPS is year-major flat
   const NYEARS = MAPS.length / STRIDE;
   const monthOf = i => i % STRIDE, yearOf = i => Math.floor(i / STRIDE);
+  // data-driven Year+Month picker: "YYYY" -> [{mon, idx}] from each map's ym ("YYYY-MM"). Handles a
+  // ragged grid (e.g. a partial current year) the flat STRIDE index can't. Empty for undated maps.
+  const _MON = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const byYear = {};
+  MAPS.forEach((m, i) => { if (m.ym) (byYear[m.ym.slice(0, 4)] ||= []).push({ mon: +m.ym.slice(5, 7), idx: i }); });
+  const YEARS = Object.keys(byYear).sort();
+  const DATED = YEARS.length > 1;  // >1 dated year -> Year dropdown filters the Month dropdown
+  const fillMonths = y => { document.getElementById('mapsel').innerHTML =
+    byYear[y].map(e => `<option value="${e.idx}">${_MON[e.mon]}</option>`).join(''); };
+  const monthPos = i => byYear[MAPS[i].ym.slice(0, 4)].findIndex(e => e.idx === i);
   let mapIdx = 0, layerIdx = 0, frame = 0, extruded = true;
   const map = new maplibregl.Map({
     container: 'map',
@@ -254,8 +264,14 @@ _TEMPLATE = """<!DOCTYPE html>
     }
     map.jumpTo({ center: [m.lon, m.lat], zoom: m.zoom, pitch: m.pitch });
     document.getElementById('subtitle').textContent = m.subtitle;
-    document.getElementById('mapsel').value = monthOf(i);  // keep both selectors in sync with the flat index
-    const ys = document.getElementById('yearsel'); if (ys) ys.value = yearOf(i);
+    if (DATED) {  // sync Year (rebuild its Month list when the year changes) + Month from this map's ym
+      const y = m.ym.slice(0, 4), ysel = document.getElementById('yearsel');
+      if (ysel.value !== y) { ysel.value = y; fillMonths(y); }
+      document.getElementById('mapsel').value = i;
+    } else {
+      document.getElementById('mapsel').value = monthOf(i);  // legacy flat index (rectangular / single-year)
+      const ys = document.getElementById('yearsel'); if (ys) ys.value = yearOf(i);
+    }
     const groups = {};
     m.layers.forEach((L, j) => { (groups[L.group || ''] ||= []).push(`<option value="${j}">${L.name}</option>`); });
     document.getElementById('layer').innerHTML = Object.entries(groups)
@@ -282,14 +298,22 @@ _TEMPLATE = """<!DOCTYPE html>
     const n = M().layers[layerIdx].frames.length; setFrame((frame + d + n) % n);
   }
 
-  function stepMonth(d) { selectMap(yearOf(mapIdx) * STRIDE + (monthOf(mapIdx) + d + STRIDE) % STRIDE); }
-  function stepYear(d) { selectMap(((yearOf(mapIdx) + d + NYEARS) % NYEARS) * STRIDE + monthOf(mapIdx)); }
-  document.getElementById('mapsel').addEventListener('change', e => selectMap(yearOf(mapIdx) * STRIDE + (+e.target.value)));
+  function stepMonth(d) {
+    if (DATED) { const ms = byYear[MAPS[mapIdx].ym.slice(0, 4)]; selectMap(ms[(monthPos(mapIdx) + d + ms.length) % ms.length].idx); }
+    else selectMap(yearOf(mapIdx) * STRIDE + (monthOf(mapIdx) + d + STRIDE) % STRIDE);
+  }
+  function stepYear(d) {
+    if (DATED) {  // keep the month position, clamped if the target year has fewer months (ragged)
+      const yi = YEARS.indexOf(MAPS[mapIdx].ym.slice(0, 4)), ms = byYear[YEARS[(yi + d + YEARS.length) % YEARS.length]];
+      selectMap(ms[Math.min(monthPos(mapIdx), ms.length - 1)].idx);
+    } else selectMap(((yearOf(mapIdx) + d + NYEARS) % NYEARS) * STRIDE + monthOf(mapIdx));
+  }
+  document.getElementById('mapsel').addEventListener('change', e => selectMap(DATED ? +e.target.value : yearOf(mapIdx) * STRIDE + (+e.target.value)));
   document.getElementById('mprev').addEventListener('click', () => stepMonth(-1));
   document.getElementById('mnext').addEventListener('click', () => stepMonth(1));
   const yearsel = document.getElementById('yearsel');
   if (yearsel) {
-    yearsel.addEventListener('change', e => selectMap((+e.target.value) * STRIDE + monthOf(mapIdx)));
+    yearsel.addEventListener('change', e => { if (DATED) { fillMonths(e.target.value); selectMap(byYear[e.target.value][0].idx); } else selectMap((+e.target.value) * STRIDE + monthOf(mapIdx)); });
     document.getElementById('yprev').addEventListener('click', () => stepYear(-1));
     document.getElementById('ynext').addEventListener('click', () => stepYear(1));
   }
@@ -327,6 +351,11 @@ _TEMPLATE = """<!DOCTYPE html>
   }
   playBtn.addEventListener('click', () => setPlay('all'));
   dayBtn.addEventListener('click', () => setPlay('day'));
+  if (DATED) {  // populate + reveal the Year picker (static placeholders only cover rectangular grids)
+    document.getElementById('yearsel').innerHTML = YEARS.map(y => `<option value="${y}">${y}</option>`).join('');
+    fillMonths(YEARS[0]);
+    document.getElementById('yearwrap').style.display = '';
+  }
   selectMap(0);
 </script>
 </body>
@@ -384,7 +413,7 @@ def _js_map(m: dict) -> dict:
         clat, clon = h3.cell_to_latlng(r["cell"])
         cells.append({"polygon": _hex_ring(r["cell"]), "cen": [round(clon, 5), round(clat, 5)]})
     return {  # distance from the (movable) centre is computed client-side from each cell's "cen"
-        "name": m["name"], "subtitle": m.get("subtitle", ""),
+        "name": m["name"], "subtitle": m.get("subtitle", ""), "ym": m.get("ym", ""),
         "lat": m["lat"], "lon": m["lon"], "zoom": m["zoom"], "pitch": m.get("pitch", 50.0),
         "elev": m.get("elevation_scale", 900.0), "legend": m.get("legend", []),
         "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
@@ -393,7 +422,7 @@ def _js_map(m: dict) -> dict:
     }
 
 
-_META_KEYS = ("name", "subtitle", "lat", "lon", "zoom", "pitch", "elev")
+_META_KEYS = ("name", "subtitle", "ym", "lat", "lon", "zoom", "pitch", "elev")
 
 
 def _fill(

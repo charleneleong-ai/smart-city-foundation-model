@@ -103,6 +103,9 @@ def main(
 
     maps = [twin_map(_name(d), p, d, days, radius=radius, res=res) for d in dates]
     unify_ranges(maps)  # absolute gradient: one colour/height scale per layer across all maps
+    if multi:
+        for k, d in enumerate(dates):
+            maps[k]["ym"] = d[:7]  # YYYY-MM drives the viewer's data-driven Year + Month pickers
     title = f"{city.upper()} — city digital twin"
     axes = {
         "map_label": "Month" if multi else "Domain",
