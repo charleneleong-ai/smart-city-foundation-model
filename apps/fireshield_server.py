@@ -23,7 +23,10 @@ from fastapi.responses import HTMLResponse
 
 from export_fireshield_feed import build_deployment, feed_at_cell
 
-_TICK_SECONDS = 1.5  # operator-clock cadence: one CA step per tick
+_TICK_SECONDS = 0.4  # operator-clock cadence
+_MIN_PER_TICK = 5    # sim-minutes advanced per tick — continuous, by-the-minute playback
+_DAY_START_MIN, _DAY_END_MIN = 6 * 60, 20 * 60  # 06:00–20:00 operational day
+_DAY_SPAN = _DAY_END_MIN - _DAY_START_MIN
 
 
 def create_app(perimeter: Path) -> FastAPI:
@@ -32,8 +35,9 @@ def create_app(perimeter: Path) -> FastAPI:
         CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"],
     )
     dep: dict = {}  # {arrival, meta, wx, members} — model + deployment, computed once
-    # The operator side is the master clock: it sets member + step here, and the app follows via /state.
-    state = {"member": None, "step": 0, "playing": False}
+    # The operator side is the master clock — a wall-clock minute over the operational day. The app
+    # follows /state in lockstep and interpolates the environment between CA steps for continuity.
+    state = {"member": None, "minute": float(_DAY_START_MIN), "playing": False}
     clock: dict = {"task": None}
 
     def deployment() -> dict:
@@ -46,6 +50,13 @@ def create_app(perimeter: Path) -> FastAPI:
     def maxstep() -> int:
         d = deployment()
         return max(d["arrival"].values()) if d["arrival"] else 0
+
+    def step_for(minute: float) -> float:  # fractional CA step the app interpolates the env at
+        return (minute - _DAY_START_MIN) / _DAY_SPAN * maxstep()
+
+    def mmclock(minute: float) -> str:
+        m = int(round(minute))
+        return f"{m // 60:02d}:{m % 60:02d}"
 
     def member_feed(m: dict) -> dict:
         feed = feed_at_cell(dep["arrival"], dep["meta"], dep["wx"], m["cell"])
@@ -78,42 +89,42 @@ def create_app(perimeter: Path) -> FastAPI:
     @app.get("/state")
     def get_state() -> dict:
         deployment()
-        return {"member": state["member"], "step": state["step"], "maxstep": maxstep(), "playing": state["playing"]}
+        return {"member": state["member"], "minute": round(state["minute"]), "clock": mmclock(state["minute"]),
+                "step": round(step_for(state["minute"]), 3), "maxstep": maxstep(),
+                "dayStart": mmclock(_DAY_START_MIN), "dayEnd": mmclock(_DAY_END_MIN), "playing": state["playing"]}
 
-    @app.post("/step")
-    def set_step(step: Annotated[int, Query()] = 0) -> dict:
-        state["step"] = max(0, min(step, maxstep()))
-        return {"step": state["step"]}
+    @app.post("/seek")
+    def seek(minute: Annotated[int, Query()] = _DAY_START_MIN) -> dict:
+        state["minute"] = float(max(_DAY_START_MIN, min(minute, _DAY_END_MIN)))
+        return {"clock": mmclock(state["minute"])}
 
     @app.post("/play")
     async def play() -> dict:
         deployment()
-        if clock["task"] and not clock["task"].done():
-            return {"playing": True, "step": state["step"]}
-        if state["step"] >= maxstep():
-            state["step"] = 0  # restart from the top
         state["playing"] = True
+        if clock["task"] and not clock["task"].done():
+            return {"playing": True, "clock": mmclock(state["minute"])}
 
-        async def run() -> None:
-            while state["playing"] and state["step"] < maxstep():
+        async def run() -> None:  # advance wall-clock minutes, looping the day until paused
+            while state["playing"]:
                 await asyncio.sleep(_TICK_SECONDS)
                 if state["playing"]:
-                    state["step"] = min(state["step"] + 1, maxstep())
-            state["playing"] = False
+                    nxt = state["minute"] + _MIN_PER_TICK
+                    state["minute"] = float(_DAY_START_MIN) if nxt >= _DAY_END_MIN else nxt
 
         clock["task"] = asyncio.create_task(run())
-        return {"playing": True, "step": state["step"]}
+        return {"playing": True, "clock": mmclock(state["minute"])}
 
     @app.post("/pause")
     def pause() -> dict:
         state["playing"] = False
-        return {"playing": False, "step": state["step"]}
+        return {"playing": False, "clock": mmclock(state["minute"])}
 
     @app.post("/reset")
     def reset() -> dict:
         state["playing"] = False
-        state["step"] = 0
-        return {"step": 0}
+        state["minute"] = float(_DAY_START_MIN)
+        return {"clock": mmclock(state["minute"])}
 
     @app.get("/", response_class=HTMLResponse)
     def panel() -> str:
@@ -166,7 +177,7 @@ firefighter to choose whose environment the app monitors; rows match the labelle
  document.getElementById("pause").onclick=()=>post("/pause");
  document.getElementById("reset").onclick=()=>post("/reset");
  setInterval(async()=>{try{const s=await(await fetch("/state")).json();
-   clk.textContent='step '+s.step+'/'+s.maxstep+(s.playing?' \\u25b6 running':' \\u23f8');}catch(e){}},600);
+   clk.textContent=s.clock+(s.playing?' \\u25b6 running':' \\u23f8 paused');}catch(e){}},500);
  fetch("/crew").then(r=>r.json()).then(d=>{b.innerHTML="";
    d.members.forEach(m=>{const x=document.createElement("button");
      x.innerHTML=m.id+' <small>· '+m.role+' · deploy risk '+m.deployRisk+

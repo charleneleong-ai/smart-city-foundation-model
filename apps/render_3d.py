@@ -193,9 +193,10 @@ _TEMPLATE = """<!DOCTYPE html>
     try {
       const s = await (await fetch(FEED_SERVER + '/state')).json();
       if (s.playing) {
-        const f = Math.min(s.step, M().layers[layerIdx].frames.length - 1);
+        const f = Math.min(Math.round(s.step), M().layers[layerIdx].frames.length - 1);
         if (f !== frame) setFrame(f);
-        if (!syncedToServer) { syncedToServer = true; toast('\\u25b6 synced to operator clock \\u2014 step ' + s.step); }
+        if (s.clock) document.getElementById('tlabel').textContent = s.clock + ' \\u00b7 operator clock';
+        if (!syncedToServer) { syncedToServer = true; toast('\\u25b6 synced to operator clock \\u2014 ' + (s.clock || '')); }
       } else { syncedToServer = false; }
     } catch (e) { syncedToServer = false; }
   }, 600);
