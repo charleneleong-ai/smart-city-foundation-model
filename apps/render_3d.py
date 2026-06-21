@@ -85,6 +85,8 @@ _TEMPLATE = """<!DOCTYPE html>
 </div>
 <div id="roster" style="position:absolute;right:10px;top:160px;max-width:320px;background:rgba(20,20,20,.86);
      color:#eee;font:12px/1.4 system-ui;padding:8px 10px;border-radius:8px;display:none"></div>
+<div id="info" style="position:absolute;right:175px;top:16px;max-width:280px;background:rgba(20,20,20,.88);
+     color:#eee;font:12px/1.45 system-ui;padding:10px 12px;border-radius:8px;display:none"></div>
 <div id="panel">
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
@@ -236,6 +238,15 @@ _TEMPLATE = """<!DOCTYPE html>
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
     document.getElementById('ldesc').textContent = L.desc || '';
+    const info = document.getElementById('info');  // top-right "what am I looking at" box (twin maps; deploy uses #roster)
+    if (M().plan && M().plan.length) info.style.display = 'none';
+    else {
+      info.style.display = 'block';
+      info.innerHTML = `<div style="font-size:10px;letter-spacing:.05em;text-transform:uppercase;opacity:.6">${L.group || 'Layer'}</div>`
+        + `<div style="font-weight:600;font-size:14px;margin:1px 0 3px">${L.name}</div>`
+        + (L.desc ? `<div style="opacity:.85">${L.desc}</div>` : '')
+        + `<div style="opacity:.6;margin-top:6px">range ${L.vmin.toFixed(1)}–${L.vmax.toFixed(1)} ${L.unit} &middot; ${F.label}</div>`;
+    }
   }
   function setFrame(i) {  // i is the combined day*24+hour index; split it across the two sliders
     const { hours } = frameDims();
