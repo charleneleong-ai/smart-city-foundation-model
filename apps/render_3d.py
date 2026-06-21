@@ -121,7 +121,7 @@ _TEMPLATE = """<!DOCTYPE html>
   const STRIDE = __STRIDE__;  // maps per outer axis (months per year); MAPS is year-major flat
   const NYEARS = MAPS.length / STRIDE;
   const monthOf = i => i % STRIDE, yearOf = i => Math.floor(i / STRIDE);
-  let mapIdx = 0, layerIdx = 0, frame = 0, extruded = true;
+  let mapIdx = 0, layerIdx = 0, frame = 0, extruded = true, crewVisible = true;
   const map = new maplibregl.Map({
     container: 'map',
     style: __BASEMAP_STYLE__,
@@ -192,14 +192,16 @@ _TEMPLATE = """<!DOCTYPE html>
   setInterval(async () => {
     try {
       const s = await (await fetch(FEED_SERVER + '/state')).json();
+      const wantCrew = s.deployedYet !== false;  // crew hidden until ~15 min into the fire
+      const crewChanged = wantCrew !== crewVisible; crewVisible = wantCrew;
       if (s.playing) {
         const f = Math.min(Math.round(s.step), M().layers[layerIdx].frames.length - 1);
-        if (f !== frame) setFrame(f);
+        if (f !== frame || crewChanged) setFrame(f);
         if (s.clock) document.getElementById('tlabel').textContent = s.clock;
         if (!syncedToServer) { syncedToServer = true; toast('\\u25b6 synced to operator clock \\u2014 ' + (s.clock || '')); }
-      } else { syncedToServer = false; }
+      } else { if (crewChanged) render(); syncedToServer = false; }
     } catch (e) { syncedToServer = false; }
-  }, 600);
+  }, 250);
 
   function clockOf(step, total) {  // map a CA step to a wall clock over an 06:00-20:00 operational day
     const mins = Math.round(360 + (step / Math.max(total, 1)) * 840);
@@ -220,8 +222,8 @@ _TEMPLATE = """<!DOCTYPE html>
       material: { ambient: 0.55, diffuse: 0.65, shininess: 28, specularColor: [60, 64, 90] },
       updateTriggers: { getFillColor: [mapIdx, layerIdx, frame], getElevation: [mapIdx, layerIdx, frame, extruded] },
     }), new deck.ScatterplotLayer({
-      // per-frame crew (advance with the front) if provided, else the static plan
-      id: 'crew', data: ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []),
+      // per-frame crew (advance with the front) if provided, else the static plan — hidden until deploy time
+      id: 'crew', data: crewVisible ? ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []) : [],
       getPosition: d => [d.lon, d.lat], getFillColor: d => d.color,
       getRadius: d => 40 + 120 * d.risk, radiusUnits: 'meters', radiusMinPixels: 9, radiusMaxPixels: 60,
       stroked: true, getLineColor: [255, 255, 255], lineWidthMinPixels: 2, pickable: true,
@@ -229,7 +231,7 @@ _TEMPLATE = """<!DOCTYPE html>
       parameters: { depthTest: false },  // draw crew above the extruded fire so they never hide behind it
     }), new deck.TextLayer({
       // on-map label per deployed firefighter so a specific member is identifiable at a glance
-      id: 'crew-labels', data: ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []),
+      id: 'crew-labels', data: crewVisible ? ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []) : [],
       getPosition: d => [d.lon, d.lat], getText: d => String(d.ff_id) + (d.role ? ' \\u00b7 ' + d.role : ''),
       getColor: [255, 255, 255], getSize: 11, getPixelOffset: [0, -18], fontWeight: 700,
       background: true, getBackgroundColor: [10, 10, 10, 205], backgroundPadding: [4, 2], pickable: false,

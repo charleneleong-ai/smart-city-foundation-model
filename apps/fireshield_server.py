@@ -24,13 +24,14 @@ from fastapi.responses import HTMLResponse
 
 from export_fireshield_feed import build_deployment, feed_at_cell
 
-_TICK_SECONDS = 0.4  # operator-clock cadence
+_TICK_SECONDS = 0.2  # operator-clock cadence
 _ACRES_PER_KM2 = 247.105
 _ACRES_PER_ENGINE = 50.0  # illustrative span-of-control: one engine company per ~50 burned acres
 _FF_PER_ENGINE = 4
-_MIN_PER_TICK = 5    # sim-minutes advanced per tick — continuous, by-the-minute playback
+_MIN_PER_TICK = 1    # advance one sim-minute per tick — true minute-by-minute progression
 _DAY_START_MIN, _DAY_END_MIN = 6 * 60, 20 * 60  # 06:00–20:00 operational day
 _DAY_SPAN = _DAY_END_MIN - _DAY_START_MIN
+_DEPLOY_AFTER_MIN = 15  # assess the fire first; commit the crew ~15 min into the incident
 
 
 def create_app(perimeter: Path) -> FastAPI:
@@ -65,9 +66,10 @@ def create_app(perimeter: Path) -> FastAPI:
         front = sum(1 for v in d["arrival"].values() if v == s)
         burned_acres = round(burned * d["hex_acres"])
         engines = max(1, round(burned_acres / _ACRES_PER_ENGINE)) if burned else 0
+        deployed = len(d["members"]) if minute >= _DAY_START_MIN + _DEPLOY_AFTER_MIN else 0
         return {"burnedCells": burned, "frontCells": front, "totalCells": d["total"],
                 "burnedAcres": burned_acres, "engines": engines, "firefighters": engines * _FF_PER_ENGINE,
-                "deployed": len(d["members"])}
+                "deployed": deployed}
 
     def step_for(minute: float) -> float:  # fractional CA step the app interpolates the env at
         return (minute - _DAY_START_MIN) / _DAY_SPAN * maxstep()
@@ -107,9 +109,11 @@ def create_app(perimeter: Path) -> FastAPI:
     @app.get("/state")
     def get_state() -> dict:
         deployment()
+        deployed_yet = state["minute"] >= _DAY_START_MIN + _DEPLOY_AFTER_MIN
         return {"member": state["member"], "minute": round(state["minute"]), "clock": mmclock(state["minute"]),
                 "step": round(step_for(state["minute"]), 3), "maxstep": maxstep(),
                 "dayStart": mmclock(_DAY_START_MIN), "dayEnd": mmclock(_DAY_END_MIN), "playing": state["playing"],
+                "deployedYet": deployed_yet, "deployClock": mmclock(_DAY_START_MIN + _DEPLOY_AFTER_MIN),
                 "assessment": assess(state["minute"])}
 
     @app.post("/seek")
@@ -196,7 +200,8 @@ firefighter. The map and the Fire-Shield app follow in lockstep.</div>
 </div>
 <div class=stage><div class=stagehead>1 · Fire &amp; damage assessment</div><div id=damage class=stat>press ▶ Run…</div></div>
 <div class=stage><div class=stagehead>2 · Manpower required</div><div id=manpower class=stat>—</div></div>
-<div class=stage><div class=stagehead>3 · Follow a deployed firefighter</div>
+<div class=stage><div class=stagehead>3 · Deploy &amp; follow a firefighter</div>
+  <div id=deploywait style="color:#fb923c"></div>
   <div id=btns>loading deployed crew…</div><div id=out>first firefighter auto-selected.</div></div>
 <script>
  const b=document.getElementById("btns"),o=document.getElementById("out"),clk=document.getElementById("clock");
@@ -205,6 +210,7 @@ firefighter. The map and the Fire-Shield app follow in lockstep.</div>
  document.getElementById("play").onclick=()=>post("/play");
  document.getElementById("pause").onclick=()=>post("/pause");
  document.getElementById("reset").onclick=()=>post("/reset");
+ const dw=document.getElementById("deploywait");
  setInterval(async()=>{try{const s=await(await fetch("/state")).json();
    clk.textContent=s.clock+(s.playing?' \\u25b6':' \\u23f8');
    const a=s.assessment||{};
@@ -212,7 +218,9 @@ firefighter. The map and the Fire-Shield app follow in lockstep.</div>
      '</b> cells \\u00b7 active front <b>'+(a.frontCells||0)+'</b> \\u00b7 '+s.clock;
    mp.innerHTML='\\u2248 <b>'+(a.firefighters||0).toLocaleString()+'</b> firefighters / <b>'+(a.engines||0)+
      '</b> engine companies for the current fire \\u00b7 tracking sector: <b>'+(a.deployed||0)+'</b> deployed';
- }catch(e){}},500);
+   if(s.deployedYet){b.style.display="block";dw.style.display="none";}
+   else{b.style.display="none";dw.style.display="block";dw.textContent='\\u23f3 assessing the fire \\u2014 crew deploys at '+s.deployClock;}
+ }catch(e){}},250);
  fetch("/crew").then(r=>r.json()).then(d=>{b.innerHTML="";
    d.members.forEach(m=>{const x=document.createElement("button");x.className="crew";
      x.innerHTML=m.id+' <small>\\u00b7 '+m.role+' \\u00b7 deploy risk '+m.deployRisk+'</small>';
