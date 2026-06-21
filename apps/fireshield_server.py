@@ -15,6 +15,7 @@ import asyncio
 from pathlib import Path
 from typing import Annotated
 
+import h3
 import typer
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
@@ -24,6 +25,9 @@ from fastapi.responses import HTMLResponse
 from export_fireshield_feed import build_deployment, feed_at_cell
 
 _TICK_SECONDS = 0.4  # operator-clock cadence
+_ACRES_PER_KM2 = 247.105
+_ACRES_PER_ENGINE = 50.0  # illustrative span-of-control: one engine company per ~50 burned acres
+_FF_PER_ENGINE = 4
 _MIN_PER_TICK = 5    # sim-minutes advanced per tick — continuous, by-the-minute playback
 _DAY_START_MIN, _DAY_END_MIN = 6 * 60, 20 * 60  # 06:00–20:00 operational day
 _DAY_SPAN = _DAY_END_MIN - _DAY_START_MIN
@@ -43,13 +47,27 @@ def create_app(perimeter: Path) -> FastAPI:
     def deployment() -> dict:
         if not dep:
             arrival, meta, wx, members = build_deployment(perimeter)
-            dep.update(arrival=arrival, meta=meta, wx=wx, members=members)
+            dep.update(arrival=arrival, meta=meta, wx=wx, members=members,
+                       total=wx["cell"].n_unique(), hex_acres=h3.average_hexagon_area(8, unit="km^2") * _ACRES_PER_KM2)
             state["member"] = members[0]["id"]  # auto-select the first deployed firefighter
         return dep
 
     def maxstep() -> int:
         d = deployment()
         return max(d["arrival"].values()) if d["arrival"] else 0
+
+    def assess(minute: float) -> dict:
+        """Stage 1 (damage) + Stage 2 (manpower) at the current clock — what has burned and what the
+        fire would demand. Manpower is an illustrative engine-company span-of-control on burned area."""
+        d = deployment()
+        s = round(step_for(minute))
+        burned = sum(1 for v in d["arrival"].values() if v <= s)
+        front = sum(1 for v in d["arrival"].values() if v == s)
+        burned_acres = round(burned * d["hex_acres"])
+        engines = max(1, round(burned_acres / _ACRES_PER_ENGINE)) if burned else 0
+        return {"burnedCells": burned, "frontCells": front, "totalCells": d["total"],
+                "burnedAcres": burned_acres, "engines": engines, "firefighters": engines * _FF_PER_ENGINE,
+                "deployed": len(d["members"])}
 
     def step_for(minute: float) -> float:  # fractional CA step the app interpolates the env at
         return (minute - _DAY_START_MIN) / _DAY_SPAN * maxstep()
@@ -91,7 +109,8 @@ def create_app(perimeter: Path) -> FastAPI:
         deployment()
         return {"member": state["member"], "minute": round(state["minute"]), "clock": mmclock(state["minute"]),
                 "step": round(step_for(state["minute"]), 3), "maxstep": maxstep(),
-                "dayStart": mmclock(_DAY_START_MIN), "dayEnd": mmclock(_DAY_END_MIN), "playing": state["playing"]}
+                "dayStart": mmclock(_DAY_START_MIN), "dayEnd": mmclock(_DAY_END_MIN), "playing": state["playing"],
+                "assessment": assess(state["minute"])}
 
     @app.post("/seek")
     def seek(minute: Annotated[int, Query()] = _DAY_START_MIN) -> dict:
@@ -146,48 +165,54 @@ if __name__ == "__main__":
     typer.run(main)
 
 
-_CONTROL_PANEL = """<!doctype html><meta charset=utf-8><title>Operator → app</title>
+_CONTROL_PANEL = """<!doctype html><meta charset=utf-8><title>Incident command → app</title>
 <style>
- body{background:#0f172a;color:#e2e8f0;font:14px/1.5 system-ui;margin:0;padding:2rem;max-width:680px}
- h1{font-size:1.1rem;color:#fb923c}.sub{color:#94a3b8;font-size:.85rem;margin-bottom:1rem}
- button{display:block;width:100%;text-align:left;background:#1e293b;border:1px solid #fb923c33;color:#e2e8f0;
-   padding:.7rem 1rem;border-radius:.6rem;font-weight:700;cursor:pointer;margin:.4rem 0}
- button:hover{background:#fb923c;color:#0f172a}button small{font-weight:400;opacity:.8}
- .ctrl{display:flex;align-items:center;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap}
- .ctrl button{display:inline-block;width:auto;margin:0;padding:.6rem 1.1rem}
- #clock{font:700 15px ui-monospace,monospace;color:#fb923c;margin-left:auto}
- pre{background:#020617;border-radius:.6rem;padding:1rem;font-size:.8rem;white-space:pre-wrap;margin-top:1.2rem}
- .live{color:#34d399}
+ body{background:#0f172a;color:#e2e8f0;font:14px/1.5 system-ui;margin:0;padding:2rem;max-width:700px}
+ h1{font-size:1.1rem;color:#fb923c;margin-bottom:.2rem}.sub{color:#94a3b8;font-size:.85rem;margin-bottom:1rem}
+ .ctrl{display:flex;align-items:center;gap:.5rem;margin-bottom:1.2rem;flex-wrap:wrap}
+ .ctrl button{background:#1e293b;border:1px solid #fb923c33;color:#e2e8f0;padding:.6rem 1.1rem;border-radius:.6rem;font-weight:700;cursor:pointer}
+ .ctrl button:hover{background:#fb923c;color:#0f172a}
+ #clock{font:700 16px ui-monospace,monospace;color:#fb923c;margin-left:auto}
+ .stage{background:#111c33;border:1px solid #ffffff14;border-radius:.7rem;padding:.8rem 1rem;margin:.6rem 0}
+ .stagehead{font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;color:#fb923c;font-weight:800;margin-bottom:.4rem}
+ .stat{font:600 14px system-ui}.stat b{color:#fff;font-family:ui-monospace,monospace}
+ .crew{display:block;width:100%;text-align:left;background:#1e293b;border:1px solid #fb923c22;color:#e2e8f0;padding:.55rem .9rem;border-radius:.5rem;font-weight:700;cursor:pointer;margin:.3rem 0}
+ .crew:hover{background:#fb923c;color:#0f172a}.crew small{font-weight:400;opacity:.8}
+ #out{color:#94a3b8;font-size:.8rem;margin-top:.6rem}.live{color:#34d399}
 </style>
-<h1>🚒 Operator simulation → Fire-Shield app</h1>
-<div class=sub>Run the simulation here — the app follows the operator clock in lockstep. Pick a
-firefighter to choose whose environment the app monitors; rows match the labelled markers on the map.</div>
+<h1>🚒 Incident command — fire → manpower → deployment</h1>
+<div class=sub>Run the fire on the operator clock; assess the damage, size the manpower, then follow a
+firefighter. The map and the Fire-Shield app follow in lockstep.</div>
 <div class=ctrl>
-  <button id=play>▶ Run simulation</button>
-  <button id=pause>⏸ Pause</button>
-  <button id=reset>⏮ Reset</button>
-  <span id=clock>step –/–</span>
+  <button id=play>▶ Run</button><button id=pause>⏸ Pause</button><button id=reset>⏮ Reset</button>
+  <span id=clock>06:00</span>
 </div>
-<div id=btns>loading deployed crew…</div>
-<pre id=out>first firefighter auto-selected — press ▶ Run, or pick another below…</pre>
+<div class=stage><div class=stagehead>1 · Fire &amp; damage assessment</div><div id=damage class=stat>press ▶ Run…</div></div>
+<div class=stage><div class=stagehead>2 · Manpower required</div><div id=manpower class=stat>—</div></div>
+<div class=stage><div class=stagehead>3 · Follow a deployed firefighter</div>
+  <div id=btns>loading deployed crew…</div><div id=out>first firefighter auto-selected.</div></div>
 <script>
  const b=document.getElementById("btns"),o=document.getElementById("out"),clk=document.getElementById("clock");
+ const dmg=document.getElementById("damage"),mp=document.getElementById("manpower");
  const post=p=>fetch(p,{method:"POST"});
  document.getElementById("play").onclick=()=>post("/play");
  document.getElementById("pause").onclick=()=>post("/pause");
  document.getElementById("reset").onclick=()=>post("/reset");
  setInterval(async()=>{try{const s=await(await fetch("/state")).json();
-   clk.textContent=s.clock+(s.playing?' \\u25b6 running':' \\u23f8 paused');}catch(e){}},500);
+   clk.textContent=s.clock+(s.playing?' \\u25b6':' \\u23f8');
+   const a=s.assessment||{};
+   dmg.innerHTML='<b>'+(a.burnedAcres||0).toLocaleString()+'</b> acres burned \\u00b7 <b>'+(a.burnedCells||0)+'/'+(a.totalCells||0)+
+     '</b> cells \\u00b7 active front <b>'+(a.frontCells||0)+'</b> \\u00b7 '+s.clock;
+   mp.innerHTML='\\u2248 <b>'+(a.firefighters||0).toLocaleString()+'</b> firefighters / <b>'+(a.engines||0)+
+     '</b> engine companies for the current fire \\u00b7 tracking sector: <b>'+(a.deployed||0)+'</b> deployed';
+ }catch(e){}},500);
  fetch("/crew").then(r=>r.json()).then(d=>{b.innerHTML="";
-   d.members.forEach(m=>{const x=document.createElement("button");
-     x.innerHTML=m.id+' <small>· '+m.role+' · deploy risk '+m.deployRisk+
-       ' · front-arrival step '+(m.arrival==null?'—':m.arrival)+'</small>';
-     x.onclick=async()=>{o.textContent="selecting "+m.id+"…";
+   d.members.forEach(m=>{const x=document.createElement("button");x.className="crew";
+     x.innerHTML=m.id+' <small>\\u00b7 '+m.role+' \\u00b7 deploy risk '+m.deployRisk+'</small>';
+     x.onclick=async()=>{o.textContent="selecting "+m.id+"\\u2026";
        const r=await fetch("/select?member="+encodeURIComponent(m.id),{method:"POST"});const f=await r.json();
-       const peak=Math.max(...f.frames.map(x=>x.env.temperature));
-       o.innerHTML='<span class=live>● app now monitoring '+f.member.id+' ('+f.member.role+')</span>\\n'+
-         'cell '+f.cell+' · '+f.steps+' steps · peak '+peak+'°C · deploy risk '+f.member.deployRisk+'\\n'+
-         'press \\u25b6 Run — the app follows the operator clock';};
+       o.innerHTML='<span class=live>\\u25cf app now following '+f.member.id+' ('+f.member.role+
+         ') \\u00b7 deploy risk '+f.member.deployRisk+'</span>';};
      b.appendChild(x);});});
 </script>
 """
