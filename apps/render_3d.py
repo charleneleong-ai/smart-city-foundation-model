@@ -44,6 +44,7 @@ _TEMPLATE = """<!DOCTYPE html>
   #bar { height: 9px; margin: 11px 0 4px;
     background: linear-gradient(90deg, rgb(0,40,255), rgb(140,40,160), rgb(255,40,0)); border-radius: 5px; }
   #scale { display: flex; justify-content: space-between; font-size: 11px; opacity: .82; }
+  #scalehint { font-size: 10px; opacity: .6; margin: 2px 0 0; }
   #legend { margin: 9px 0 2px; display: none; }
   #legend .lrow { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; opacity: .92; }
   #legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 14px; border: 1px solid rgba(255,255,255,.3); }
@@ -97,6 +98,7 @@ _TEMPLATE = """<!DOCTYPE html>
   </div>
   <div id="bar"></div>
   <div id="scale"><span id="vmin"></span><span id="vmax"></span></div>
+  <div id="scalehint">colour &amp; 3-D height both encode value &mdash; taller &amp; brighter = higher</div>
   <div id="legend"></div>
   <div id="controls">
     <div class="ctl"><label>&#9678; Radius</label>
@@ -283,6 +285,7 @@ _TEMPLATE = """<!DOCTYPE html>
     lg.style.display = catLegend ? 'block' : 'none';
     document.getElementById('bar').style.display = catLegend ? 'none' : '';
     document.getElementById('scale').style.display = catLegend ? 'none' : '';
+    document.getElementById('scalehint').style.display = catLegend ? 'none' : '';
     if (catLegend) lg.innerHTML = m.legend.map(e =>
       `<div class="lrow"><span class="sw" style="background:rgb(${e.color.slice(0, 3).join(',')})"></span>${e.label}</div>`).join('');
     render();
