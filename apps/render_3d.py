@@ -373,7 +373,7 @@ _TEMPLATE = """<!DOCTYPE html>
     fillMonths(YEARS[0]);
     document.getElementById('yearwrap').style.display = '';
   }
-  selectMap(0);
+  selectMap(MAPS.length - 1);  // open on the latest snapshot (most recent month) by default
 </script>
 </body>
 </html>
