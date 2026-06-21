@@ -33,6 +33,10 @@ uv run pytest -q                     # full test suite
 
 ## Twin viewer (3D H3 + deck.gl + MapLibre)
 
+![London city twin — 2 m temperature animating over the H3 grid, hexes extruded and coloured by value](docs/assets/london_temperature_simulation.gif)
+
+*London twin, **2 m temperature** layer playing across a day — build it with the first command below, then pick the Weather → temperature layer and press **Play**.*
+
 3D WebGL map (extruded hexes, dark basemap, no token) with independent time controls — **Year**,
 **Month** (filtered to each year's available months), **Day**, and a **Time-of-day** slider — plus
 a **Domain**/**Layer** picker, an in-map **radius** slider (filters preloaded cells, no re-fetch),
