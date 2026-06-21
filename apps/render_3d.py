@@ -189,19 +189,27 @@ _TEMPLATE = """<!DOCTYPE html>
   // Follow the operator clock: while the server runs the sim, mirror its step on the map so the fire
   // animation, the operator panel, and the Fire-Shield app all play in lockstep.
   let syncedToServer = false;
+  let mcs = { minute: 360, rate: 2, playing: false, t: 0 };
+  const mfmt = m => { m = Math.max(0, Math.round(m)); return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+  setInterval(() => {  // smooth local clock tick while synced to the operator
+    if (syncedToServer) {
+      const m = mcs.minute + (mcs.playing ? mcs.rate * (performance.now() - mcs.t) / 1000 : 0);
+      document.getElementById('tlabel').textContent = mfmt(m);
+    }
+  }, 100);
   setInterval(async () => {
     try {
       const s = await (await fetch(FEED_SERVER + '/state')).json();
+      mcs = { minute: s.minute, rate: s.minPerSec || 2, playing: s.playing, t: performance.now() };  // resync
       const wantCrew = s.deployedYet !== false;  // crew hidden until ~15 min into the fire
       const crewChanged = wantCrew !== crewVisible; crewVisible = wantCrew;
       if (s.playing) {
         const f = Math.min(Math.round(s.step), M().layers[layerIdx].frames.length - 1);
         if (f !== frame || crewChanged) setFrame(f);
-        if (s.clock) document.getElementById('tlabel').textContent = s.clock;
         if (!syncedToServer) { syncedToServer = true; toast('\\u25b6 synced to operator clock \\u2014 ' + (s.clock || '')); }
       } else { if (crewChanged) render(); syncedToServer = false; }
     } catch (e) { syncedToServer = false; }
-  }, 250);
+  }, 1000);
 
   function clockOf(step, total) {  // map a CA step to a wall clock over the fire's active window (06:00-09:00)
     const mins = Math.round(360 + (step / Math.max(total, 1)) * 180);

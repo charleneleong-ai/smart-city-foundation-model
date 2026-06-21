@@ -113,6 +113,7 @@ def create_app(perimeter: Path) -> FastAPI:
         return {"member": state["member"], "minute": round(state["minute"]), "clock": mmclock(state["minute"]),
                 "step": round(step_for(state["minute"]), 3), "maxstep": maxstep(),
                 "dayStart": mmclock(_DAY_START_MIN), "dayEnd": mmclock(_DAY_END_MIN), "playing": state["playing"],
+                "dayStartMin": _DAY_START_MIN, "daySpanMin": _DAY_SPAN, "minPerSec": _MIN_PER_TICK / _TICK_SECONDS,
                 "deployedYet": deployed_yet, "deployClock": mmclock(_DAY_START_MIN + _DEPLOY_AFTER_MIN),
                 "assessment": assess(state["minute"])}
 
@@ -211,16 +212,20 @@ firefighter. The map and the Fire-Shield app follow in lockstep.</div>
  document.getElementById("pause").onclick=()=>post("/pause");
  document.getElementById("reset").onclick=()=>post("/reset");
  const dw=document.getElementById("deploywait");
+ let cs={minute:360,rate:2,playing:false,t:0};
+ const fmt=m=>{m=Math.max(0,Math.round(m));return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');};
+ setInterval(()=>{const m=cs.minute+(cs.playing?cs.rate*(performance.now()-cs.t)/1000:0);
+   clk.textContent=fmt(m)+(cs.playing?' \\u25b6 running':' \\u23f8 paused');},100);  // smooth local tick
  setInterval(async()=>{try{const s=await(await fetch("/state")).json();
-   clk.textContent=s.clock+(s.playing?' \\u25b6':' \\u23f8');
+   cs={minute:s.minute,rate:s.minPerSec||2,playing:s.playing,t:performance.now()};  // resync
    const a=s.assessment||{};
    dmg.innerHTML='<b>'+(a.burnedAcres||0).toLocaleString()+'</b> acres burned \\u00b7 <b>'+(a.burnedCells||0)+'/'+(a.totalCells||0)+
-     '</b> cells \\u00b7 active front <b>'+(a.frontCells||0)+'</b> \\u00b7 '+s.clock;
+     '</b> cells \\u00b7 active front <b>'+(a.frontCells||0)+'</b>';
    mp.innerHTML='\\u2248 <b>'+(a.firefighters||0).toLocaleString()+'</b> firefighters / <b>'+(a.engines||0)+
      '</b> engine companies for the current fire \\u00b7 tracking sector: <b>'+(a.deployed||0)+'</b> deployed';
    if(s.deployedYet){b.style.display="block";dw.style.display="none";}
    else{b.style.display="none";dw.style.display="block";dw.textContent='\\u23f3 assessing the fire \\u2014 crew deploys at '+s.deployClock;}
- }catch(e){}},250);
+ }catch(e){}},1000);
  fetch("/crew").then(r=>r.json()).then(d=>{b.innerHTML="";
    d.members.forEach(m=>{const x=document.createElement("button");x.className="crew";
      x.innerHTML=m.id+' <small>\\u00b7 '+m.role+' \\u00b7 deploy risk '+m.deployRisk+'</small>';
