@@ -141,10 +141,8 @@ def create_app(perimeter: Path) -> FastAPI:
         return {"playing": True, "clock": mmclock(state["minute"])}
 
     @app.on_event("startup")
-    async def _autostart() -> None:  # boot straight into a running sim so the app shows it driving
+    async def _warmup() -> None:  # precompute the deployment so the first request is fast — start paused at 06:00
         deployment()
-        state["playing"] = True
-        _start_clock()
 
     @app.post("/pause")
     def pause() -> dict:
