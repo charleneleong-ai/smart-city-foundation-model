@@ -29,7 +29,7 @@ from sctwin.adapters.cache import CachingAdapter
 from sctwin.adapters.elevation import fetch_elevation
 from sctwin.adapters.open_meteo import WEATHER_VARS, OpenMeteoWeatherAdapter
 from sctwin.app.cells import cells_in_bbox
-from sctwin.deploy import sample_roster
+from sctwin.deploy import Constraints, sample_roster
 from sctwin.geo import cell_of, center_of
 from sctwin.verify.burn import cells_from_geojson, score
 
@@ -94,7 +94,7 @@ def overlay_crew(m: dict, wx, seed: str, arrival: dict[str, int], meta: dict) ->
     `maxstep` mirrors build_backtest_map's frame count so the crew frames stay index-aligned."""
     maxstep = max(arrival.values()) if arrival else 1
     return {**m, **crew_overlay(wx, seed, arrival, meta["at"], meta["wind_from"], meta["wind_speed"],
-                                sample_roster(), maxstep)}
+                                sample_roster(12), maxstep, constraints=Constraints(required_capacity=8.0))}
 
 
 def main(

@@ -42,6 +42,15 @@ def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
+_DAY_START_MIN, _DAY_END_MIN = 6 * 60, 20 * 60  # map the CA steps across an 06:00–20:00 operational day
+
+
+def _clock(step: int, maxstep: int) -> str:
+    """Map a CA step to a wall-clock time over the operational day, so the feed reads as a timeline."""
+    mins = round(_DAY_START_MIN + (step / max(maxstep, 1)) * (_DAY_END_MIN - _DAY_START_MIN))
+    return f"{mins // 60:02d}:{mins % 60:02d}"
+
+
 def _target_cell(arrival: dict[str, int], maxstep: int) -> str:
     """A cell the front reaches mid-animation, so the feed shows the calm-then-spike arc a
     firefighter would actually experience (not the seed, which burns from step 0). Deterministic:
@@ -106,14 +115,15 @@ def feed_at_cell(arrival: dict[str, int], meta: dict, wx, target: str) -> dict:
         burned = sum(1 for c in ring if arrival.get(c, maxstep + 1) <= s)
         env = _environment(burned / len(ring), arrival.get(target, maxstep + 1) <= s,
                            base_temp=base_temp, wind_kph=meta["wind_speed"], wind_from=wind_from, spread_dir=spread_dir)
-        frames.append({"step": s, "env": env})
+        frames.append({"step": s, "clock": _clock(s, maxstep), "env": env})
     t_lat, t_lng = h3.cell_to_latlng(target)
     return {
         "source": "smart-city-foundation-model · macro Palisades fire CA",
         "generated_for": "fire-shield-google-ai",
         "cell": target, "lat": round(t_lat, 5), "lng": round(t_lng, 5),
         "windFrom": wind_from, "windKph": round(meta["wind_speed"]),
-        "steps": maxstep, "frames": frames,
+        "steps": maxstep, "dayStart": _clock(0, maxstep), "dayEnd": _clock(maxstep, maxstep),
+        "frames": frames,
     }
 
 
@@ -137,7 +147,8 @@ def build_deployment(perimeter: Path, **model_kw) -> tuple:
         temp_c=sum(temps) / max(len(temps), 1), wind_speed=meta["wind_speed"],
         wind_dir=meta["wind_from"], duration_min=240.0,
     )
-    plan = deploy(scenario, sample_roster(), Constraints(required_capacity=4.0))
+    # a sector-level deployment (12 firefighters / several crews) rather than a single 6-person company
+    plan = deploy(scenario, sample_roster(12), Constraints(required_capacity=8.0))
     reached = sorted((c for c, s in arrival.items() if s > 0), key=lambda c: arrival[c])
     order = ([a for a in plan.assignments if a.role != "staging"] +
              [a for a in plan.assignments if a.role == "staging"])  # on-task ahead, staging at the rear
