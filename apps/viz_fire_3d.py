@@ -93,8 +93,12 @@ def overlay_crew(m: dict, wx, seed: str, arrival: dict[str, int], meta: dict) ->
     panel, scored against this fire's own peak-hour wind/heat, advancing with the model front.
     `maxstep` mirrors build_backtest_map's frame count so the crew frames stay index-aligned."""
     maxstep = max(arrival.values()) if arrival else 1
+    # size the sector crew to the fire (same rule as the feed server's build_deployment) so the map's
+    # firefighter IDs match the ones the operator panel/app select
+    peak_acres = len(arrival) * h3.average_hexagon_area(8, unit="km^2") * 247.105
+    crew = max(8, min(round(peak_acres / 900), 24))
     return {**m, **crew_overlay(wx, seed, arrival, meta["at"], meta["wind_from"], meta["wind_speed"],
-                                sample_roster(12), maxstep, constraints=Constraints(required_capacity=8.0))}
+                                sample_roster(crew), maxstep, constraints=Constraints(required_capacity=crew * 0.6))}
 
 
 def main(

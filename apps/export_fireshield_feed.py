@@ -147,8 +147,10 @@ def build_deployment(perimeter: Path, **model_kw) -> tuple:
         temp_c=sum(temps) / max(len(temps), 1), wind_speed=meta["wind_speed"],
         wind_dir=meta["wind_from"], duration_min=240.0,
     )
-    # a sector-level deployment (12 firefighters / several crews) rather than a single 6-person company
-    plan = deploy(scenario, sample_roster(12), Constraints(required_capacity=8.0))
+    # size the sector deployment to the fire (peak burned area), capped so the map stays legible
+    peak_acres = len(arrival) * h3.average_hexagon_area(8, unit="km^2") * 247.105
+    crew = max(8, min(round(peak_acres / 900), 24))
+    plan = deploy(scenario, sample_roster(crew), Constraints(required_capacity=crew * 0.6))
     reached = sorted((c for c, s in arrival.items() if s > 0), key=lambda c: arrival[c])
     order = ([a for a in plan.assignments if a.role != "staging"] +
              [a for a in plan.assignments if a.role == "staging"])  # on-task ahead, staging at the rear

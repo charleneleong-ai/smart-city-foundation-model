@@ -117,22 +117,29 @@ def create_app(perimeter: Path) -> FastAPI:
         state["minute"] = float(max(_DAY_START_MIN, min(minute, _DAY_END_MIN)))
         return {"clock": mmclock(state["minute"])}
 
+    async def _run() -> None:  # advance wall-clock minutes, looping the day until paused
+        while state["playing"]:
+            await asyncio.sleep(_TICK_SECONDS)
+            if state["playing"]:
+                nxt = state["minute"] + _MIN_PER_TICK
+                state["minute"] = float(_DAY_START_MIN) if nxt >= _DAY_END_MIN else nxt
+
+    def _start_clock() -> None:
+        if not (clock["task"] and not clock["task"].done()):
+            clock["task"] = asyncio.create_task(_run())
+
     @app.post("/play")
     async def play() -> dict:
         deployment()
         state["playing"] = True
-        if clock["task"] and not clock["task"].done():
-            return {"playing": True, "clock": mmclock(state["minute"])}
-
-        async def run() -> None:  # advance wall-clock minutes, looping the day until paused
-            while state["playing"]:
-                await asyncio.sleep(_TICK_SECONDS)
-                if state["playing"]:
-                    nxt = state["minute"] + _MIN_PER_TICK
-                    state["minute"] = float(_DAY_START_MIN) if nxt >= _DAY_END_MIN else nxt
-
-        clock["task"] = asyncio.create_task(run())
+        _start_clock()
         return {"playing": True, "clock": mmclock(state["minute"])}
+
+    @app.on_event("startup")
+    async def _autostart() -> None:  # boot straight into a running sim so the app shows it driving
+        deployment()
+        state["playing"] = True
+        _start_clock()
 
     @app.post("/pause")
     def pause() -> dict:
