@@ -72,6 +72,24 @@ def crew_records(plan: Plan, roster: Roster, scenario: FireScenario) -> list[dic
     return recs
 
 
+def model_legend(scenario: FireScenario) -> list[dict]:
+    """Self-documenting legend: crew colour ramp + every input and which risk driver it feeds.
+    Swatch rows carry `color`; caption rows (no color) explain the model and inline the live scenario."""
+    s = scenario
+    return [
+        {"label": "crew marker → combined risk:"},
+        {"color": list(_ramp(0.15)), "label": "low"},
+        {"color": list(_ramp(0.55)), "label": "moderate"},
+        {"color": list(_ramp(1.0)), "label": "high (vs plan worst)"},
+        {"label": "risk = acute + incident + career"},
+        {"label": "acute ← heat × age/CV/resp/fitness/heat-tol/#conditions"},
+        {"label": "incident ← PM2.5 dose × time (resp sensitises)"},
+        {"label": "career ← (career dose + this incident)^1.2"},
+        {"label": f"scenario: {s.fire_type} fire · size {s.size:g}"},
+        {"label": f"PM2.5 {s.pm25:g} · {s.temp_c:g}°C · wind {s.wind_speed:g}km/h@{s.wind_dir:g}° · {s.duration_min:g}min"},
+    ]
+
+
 def deploy_map(scenario: FireScenario, plan: Plan, roster: Roster, *, preset: dict, rings: int = 2) -> dict:
     """Map payload for `to_self_contained_html`: a Fire domain (smoke/heat/dose hexes) + `plan` markers."""
     surf = hazard_surface(scenario, rings)
@@ -91,4 +109,6 @@ def deploy_map(scenario: FireScenario, plan: Plan, roster: Roster, *, preset: di
         "pitch": preset.get("pitch", 50.0), "elevation_scale": edge,
         "layers": [layer("smoke / PM2.5", "smoke"), layer("heat", "heat"), layer("exposure dose", "dose")],
         "plan": crew_records(plan, roster, scenario),
+        "legend": model_legend(scenario),
+        "gradient": True,  # keep the hex value-gradient bar visible alongside the model legend
     }

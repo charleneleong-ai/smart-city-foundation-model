@@ -20,13 +20,19 @@ class RiskScore:
     drivers: dict[str, float]  # unweighted per-term contributions
 
 
+HEAT_TOLERANCE = {"low": 1.25, "avg": 1.0, "high": 0.85}
+
+
 def acute_risk(ff: Firefighter, hl: float) -> float:
-    """Heat + cardiac risk for thermal load `hl`, amplified by age, CV, low fitness, respiratory."""
+    """Heat + cardiac risk for thermal load `hl`, amplified by age, CV, low fitness, respiratory,
+    heat-tolerance band, and the count of listed comorbidities."""
     age_factor = 1.0 + max(ff.age - 40, 0) * 0.02
     cv_factor = 1.5 if ff.cardiovascular else 1.0
     resp_factor = 1.2 if ff.respiratory else 1.0
     fitness_factor = 1.0 + (1.0 - ff.fitness)  # unfit -> up to ~2x
-    return hl * age_factor * cv_factor * resp_factor * fitness_factor * 0.01
+    heat_factor = HEAT_TOLERANCE[ff.heat_tolerance]
+    comorbidity_factor = 1.0 + 0.05 * len(ff.conditions)  # fuller clinical ledger beyond cv/resp
+    return hl * age_factor * cv_factor * resp_factor * fitness_factor * heat_factor * comorbidity_factor * 0.01
 
 
 def incident_dose_risk(td: float, ff: Firefighter) -> float:

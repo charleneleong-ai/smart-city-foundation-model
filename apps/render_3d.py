@@ -47,6 +47,7 @@ _TEMPLATE = """<!DOCTYPE html>
   #legend { margin: 9px 0 2px; display: none; }
   #legend .lrow { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; opacity: .92; }
   #legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 14px; border: 1px solid rgba(255,255,255,.3); }
+  #legend .cap { font-size: 11px; opacity: .68; margin: 5px 0 1px; display: block; }
   #about { font-size: 12px; opacity: .82; margin: 11px 0 0; }
   #controls { margin-top: 12px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 11px; }
   .ctl { margin-bottom: 9px; }
@@ -83,6 +84,8 @@ _TEMPLATE = """<!DOCTYPE html>
 </div>
 <div id="roster" style="position:absolute;right:10px;top:160px;max-width:320px;background:rgba(20,20,20,.86);
      color:#eee;font:12px/1.4 system-ui;padding:8px 10px;border-radius:8px;display:none"></div>
+<div id="feedtoast" style="position:absolute;left:50%;top:14px;transform:translateX(-50%);background:rgba(251,146,60,.96);
+     color:#0f172a;font:600 13px system-ui;padding:9px 16px;border-radius:8px;display:none;z-index:6;box-shadow:0 4px 18px rgba(0,0,0,.45)"></div>
 <div id="panel">
   <h1>__TITLE__</h1>
   <div class="sub" id="subtitle"></div>
@@ -170,6 +173,20 @@ _TEMPLATE = """<!DOCTYPE html>
     recompute(); visRadius = Math.min(visRadius, +radius.max); radius.value = visRadius; render();
   }
 
+  // Click a deployed firefighter -> tell the live feed server to drive the Fire-Shield app with them.
+  const FEED_SERVER = 'http://localhost:8787';
+  let toastTimer;
+  function toast(msg) {
+    const t = document.getElementById('feedtoast'); t.textContent = msg; t.style.display = 'block';
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.display = 'none'; }, 3500);
+  }
+  function feedToApp(id) {
+    fetch(FEED_SERVER + '/select?member=' + encodeURIComponent(id), { method: 'POST' })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(f => toast('\\u2192 Fire-Shield app now monitoring ' + id + (f.member ? ' \\u00b7 ' + f.member.role : '')))
+      .catch(() => toast('feed server not reachable on :8787 \\u2014 start fireshield_server.py'));
+  }
+
   function render() {
     const m = M(), L = m.layers[layerIdx], F = L.frames[frame];
     const data = [];
@@ -188,8 +205,17 @@ _TEMPLATE = """<!DOCTYPE html>
       // per-frame crew (advance with the front) if provided, else the static plan
       id: 'crew', data: ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []),
       getPosition: d => [d.lon, d.lat], getFillColor: d => d.color,
-      getRadius: d => 12 + 60 * d.risk, radiusUnits: 'meters', radiusMinPixels: 5,
-      stroked: true, getLineColor: [10, 10, 10], lineWidthMinPixels: 1, pickable: true,
+      getRadius: d => 40 + 120 * d.risk, radiusUnits: 'meters', radiusMinPixels: 9, radiusMaxPixels: 60,
+      stroked: true, getLineColor: [255, 255, 255], lineWidthMinPixels: 2, pickable: true,
+      onClick: info => { if (info.object && info.object.ff_id) feedToApp(info.object.ff_id); },  // -> drive the app
+      parameters: { depthTest: false },  // draw crew above the extruded fire so they never hide behind it
+    }), new deck.TextLayer({
+      // on-map label per deployed firefighter so a specific member is identifiable at a glance
+      id: 'crew-labels', data: ((M().plan_frames && M().plan_frames[Math.min(frame, M().plan_frames.length - 1)]) || M().plan || []),
+      getPosition: d => [d.lon, d.lat], getText: d => String(d.ff_id) + (d.role ? ' \\u00b7 ' + d.role : ''),
+      getColor: [255, 255, 255], getSize: 11, getPixelOffset: [0, -18], fontWeight: 700,
+      background: true, getBackgroundColor: [10, 10, 10, 205], backgroundPadding: [4, 2], pickable: false,
+      parameters: { depthTest: false },  // labels also float above the fire
     })] });
     document.getElementById('tlabel').textContent = F.label;
     document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';
@@ -206,12 +232,21 @@ _TEMPLATE = """<!DOCTYPE html>
     const rows = [...plan].sort((a, b) => b.risk - a.risk).map(d => {
       const c = d.color, bar = Math.round(100 * d.risk / maxRisk);
       const flags = (d.cardiovascular ? 'CV ' : '') + (d.respiratory ? 'R' : '') || '–';
-      return `<div style="margin:3px 0"><b>${d.ff_id}</b> ${d.age} ${flags}
+      const dr = d.drivers || {};
+      return `<div style="margin:5px 0;border-bottom:1px solid rgba(255,255,255,.06);padding-bottom:4px"
+        title="risk = acute + incident + career\\nacute: heat x age/CV/fitness/resp/heat-tol/comorbidities\\nincident: PM2.5 dose x time on scene\\ncareer: (banked dose + this incident)^1.2\\nband [low,high] = +/-30% literature prior (not conformal)">
+        <b>${d.ff_id}</b> ${d.age} ${flags}
         <span style="float:right">${d.role.toUpperCase()} @${d.rotation}m</span><br>
         <span style="display:inline-block;height:7px;width:${bar}%;background:rgb(${c[0]},${c[1]},${c[2]})"></span>
-        risk ${d.risk} [${d.low}, ${d.high}]</div>`;
+        risk <b>${d.risk}</b> [${d.low}, ${d.high}]<br>
+        <span style="opacity:.7;font-size:11px">acute ${dr.acute} · incident ${dr.incident} · career ${dr.career}</span></div>`;
     }).join('');
-    el.innerHTML = `<div style="font-weight:600;margin-bottom:4px">Deployment — ${M().name}</div>${rows}`;
+    el.innerHTML = `<div style="font-weight:600;margin-bottom:2px">Deployment — ${M().name}</div>`
+      + `<div style="color:#fb923c;font-size:10px;margin-bottom:6px">\\u2192 click a firefighter on the map to feed the Fire-Shield app</div>${rows}`
+      + `<div style="opacity:.6;font-size:10px;margin-top:6px;line-height:1.4">`
+      + `risk = acute + incident + career · hover a row for the formula`
+      + `<br>acute = heat × age/CV/fitness/resp/heat-tol/comorbidities`
+      + `<br>incident = PM2.5 dose × time · career = (banked+incident)<sup>1.2</sup></div>`;
     el.style.display = 'block';
   }
 
@@ -235,11 +270,13 @@ _TEMPLATE = """<!DOCTYPE html>
     visRadius = +radius.max; radius.value = visRadius;
     slider.max = m.layers[0].frames.length - 1; slider.value = 0;
     const lg = document.getElementById('legend'), catLegend = m.legend && m.legend.length;  // categorical swatches vs gradient
+    const showGrad = !catLegend || m.gradient;  // gradient bar stays when the map asks to keep it
     lg.style.display = catLegend ? 'block' : 'none';
-    document.getElementById('bar').style.display = catLegend ? 'none' : '';
-    document.getElementById('scale').style.display = catLegend ? 'none' : '';
-    if (catLegend) lg.innerHTML = m.legend.map(e =>
-      `<div class="lrow"><span class="sw" style="background:rgb(${e.color.slice(0, 3).join(',')})"></span>${e.label}</div>`).join('');
+    document.getElementById('bar').style.display = showGrad ? '' : 'none';
+    document.getElementById('scale').style.display = showGrad ? '' : 'none';
+    if (catLegend) lg.innerHTML = m.legend.map(e => e.color  // swatch row vs caption-only row
+      ? `<div class="lrow"><span class="sw" style="background:rgb(${e.color.slice(0, 3).join(',')})"></span>${e.label}</div>`
+      : `<div class="lrow cap">${e.label}</div>`).join('');
     render();
     renderRoster();
   }
@@ -346,6 +383,7 @@ def _js_map(m: dict) -> dict:
         "name": m["name"], "subtitle": m.get("subtitle", ""),
         "lat": m["lat"], "lon": m["lon"], "zoom": m["zoom"], "pitch": m.get("pitch", 50.0),
         "elev": m.get("elevation_scale", 900.0), "legend": m.get("legend", []),
+        "gradient": m.get("gradient", False),  # keep the value-gradient bar even when a legend is shown
         "cells": cells, "layers": [_js_layer(L) for L in m["layers"]],
         "plan": m.get("plan", []),  # per-firefighter deployment markers (empty for non-fire maps)
         "plan_frames": m.get("plan_frames"),  # optional per-frame crew positions (advance with the front)
