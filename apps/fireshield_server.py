@@ -41,7 +41,8 @@ def create_app(perimeter: Path) -> FastAPI:
 
     def member_feed(m: dict) -> dict:
         feed = feed_at_cell(dep["arrival"], dep["meta"], dep["wx"], m["cell"])
-        feed["member"] = {k: m[k] for k in ("id", "role", "ppe", "deployRisk", "arrival")}
+        feed["member"] = {k: m[k] for k in
+                          ("id", "role", "ppe", "deployRisk", "riskLow", "riskHigh", "drivers", "arrival")}
         return feed
 
     @app.get("/crew")

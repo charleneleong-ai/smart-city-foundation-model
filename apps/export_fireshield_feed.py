@@ -156,9 +156,11 @@ def build_deployment(perimeter: Path, **model_kw) -> tuple:
     for i, a in enumerate(order):
         cell = reached[i * len(reached) // max(len(order), 1)] if reached else seed
         lat, lng = h3.cell_to_latlng(cell)
+        r = plan.per_ff_risk[a.firefighter_id]
         members.append({
             "id": a.firefighter_id, "role": a.role, "ppe": a.ppe,
-            "deployRisk": round(plan.per_ff_risk[a.firefighter_id].value, 3),
+            "deployRisk": round(r.value, 3), "riskLow": round(r.low, 3), "riskHigh": round(r.high, 3),
+            "drivers": {k: round(v, 3) for k, v in r.drivers.items()},  # acute / incident / career
             "cell": cell, "lat": round(lat, 5), "lng": round(lng, 5), "arrival": arrival.get(cell),
         })
     return arrival, meta, wx, members
