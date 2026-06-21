@@ -195,7 +195,7 @@ _TEMPLATE = """<!DOCTYPE html>
       if (s.playing) {
         const f = Math.min(Math.round(s.step), M().layers[layerIdx].frames.length - 1);
         if (f !== frame) setFrame(f);
-        if (s.clock) document.getElementById('tlabel').textContent = s.clock + ' \\u00b7 operator clock';
+        if (s.clock) document.getElementById('tlabel').textContent = s.clock;
         if (!syncedToServer) { syncedToServer = true; toast('\\u25b6 synced to operator clock \\u2014 ' + (s.clock || '')); }
       } else { syncedToServer = false; }
     } catch (e) { syncedToServer = false; }
@@ -236,8 +236,7 @@ _TEMPLATE = """<!DOCTYPE html>
       parameters: { depthTest: false },  // labels also float above the fire
     })] });
     const lastFrame = L.frames.length - 1;
-    document.getElementById('tlabel').textContent = lastFrame > 0
-      ? (clockOf(frame, lastFrame) + ' \\u00b7 ' + F.label) : F.label;
+    document.getElementById('tlabel').textContent = lastFrame > 0 ? clockOf(frame, lastFrame) : F.label;
     document.getElementById('rlabel').textContent = '\\u2264 ' + visRadius + ' km (' + data.length + ' tiles)';
     document.getElementById('vmin').textContent = L.vmin.toFixed(1) + ' ' + L.unit;
     document.getElementById('vmax').textContent = L.vmax.toFixed(1) + ' ' + L.unit;
