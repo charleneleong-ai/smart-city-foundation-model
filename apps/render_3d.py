@@ -186,6 +186,19 @@ _TEMPLATE = """<!DOCTYPE html>
       .then(f => toast('\\u2192 Fire-Shield app now monitoring ' + id + (f.member ? ' \\u00b7 ' + f.member.role : '')))
       .catch(() => toast('feed server not reachable on :8787 \\u2014 start fireshield_server.py'));
   }
+  // Follow the operator clock: while the server runs the sim, mirror its step on the map so the fire
+  // animation, the operator panel, and the Fire-Shield app all play in lockstep.
+  let syncedToServer = false;
+  setInterval(async () => {
+    try {
+      const s = await (await fetch(FEED_SERVER + '/state')).json();
+      if (s.playing) {
+        const f = Math.min(s.step, M().layers[layerIdx].frames.length - 1);
+        if (f !== frame) setFrame(f);
+        if (!syncedToServer) { syncedToServer = true; toast('\\u25b6 synced to operator clock \\u2014 step ' + s.step); }
+      } else { syncedToServer = false; }
+    } catch (e) { syncedToServer = false; }
+  }, 600);
 
   function render() {
     const m = M(), L = m.layers[layerIdx], F = L.frames[frame];
