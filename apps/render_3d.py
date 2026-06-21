@@ -194,7 +194,8 @@ _TEMPLATE = """<!DOCTYPE html>
   const mfmt = m => { m = Math.max(0, Math.round(m)); return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
   setInterval(() => {  // smooth local loop: interpolate the minute -> fractional frame -> fluid burn + clock
     if (!syncedToServer) return;
-    const minute = mcs.minute + (mcs.playing ? mcs.rate * (performance.now() - mcs.t) / 1000 : 0);
+    let minute = mcs.minute + (mcs.playing ? mcs.rate * (performance.now() - mcs.t) / 1000 : 0);
+    if (mcs.span && minute >= mcs.start + mcs.span) minute = mcs.start + ((minute - mcs.start) % mcs.span);  // loop smoothly
     frameF = mcs.span ? ((minute - mcs.start) / mcs.span) * mcs.maxstep : frameF;
     syncClock = mfmt(minute);
     render();

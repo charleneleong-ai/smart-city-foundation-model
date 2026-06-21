@@ -209,12 +209,13 @@ firefighter. The map and the Fire-Shield app follow in lockstep.</div>
  document.getElementById("pause").onclick=()=>post("/pause");
  document.getElementById("reset").onclick=()=>post("/reset");
  const dw=document.getElementById("deploywait");
- let cs={minute:360,rate:2,playing:false,t:0};
+ let cs={minute:360,rate:2,playing:false,t:0,start:360,span:180};
  const fmt=m=>{m=Math.max(0,Math.round(m));return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');};
- setInterval(()=>{const m=cs.minute+(cs.playing?cs.rate*(performance.now()-cs.t)/1000:0);
+ setInterval(()=>{let m=cs.minute+(cs.playing?cs.rate*(performance.now()-cs.t)/1000:0);
+   if(cs.span&&m>=cs.start+cs.span)m=cs.start+((m-cs.start)%cs.span);  // loop the day smoothly (no end-of-day overshoot)
    clk.textContent=fmt(m)+(cs.playing?' \\u25b6 running':' \\u23f8 paused');},100);  // smooth local tick
  setInterval(async()=>{try{const s=await(await fetch("/state")).json();
-   cs={minute:s.minute,rate:s.minPerSec||2,playing:s.playing,t:performance.now()};  // resync
+   cs={minute:s.minute,rate:s.minPerSec||2,playing:s.playing,t:performance.now(),start:s.dayStartMin||360,span:s.daySpanMin||180};  // resync
    const a=s.assessment||{};
    dmg.innerHTML='<b>'+(a.burnedAcres||0).toLocaleString()+'</b> acres burned \\u00b7 <b>'+(a.burnedCells||0)+'/'+(a.totalCells||0)+
      '</b> cells \\u00b7 active front <b>'+(a.frontCells||0)+'</b>';
