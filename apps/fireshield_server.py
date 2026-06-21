@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse
 
 from export_fireshield_feed import build_deployment, feed_at_cell
 
-_TICK_SECONDS = 0.2  # operator-clock cadence
+_TICK_SECONDS = 0.5  # operator-clock cadence — ~2 sim-min/sec so each minute is readable
 _ACRES_PER_KM2 = 247.105
 _ACRES_PER_ENGINE = 50.0  # illustrative span-of-control: one engine company per ~50 burned acres
 _FF_PER_ENGINE = 4
