@@ -29,7 +29,7 @@ _ACRES_PER_KM2 = 247.105
 _ACRES_PER_ENGINE = 50.0  # illustrative span-of-control: one engine company per ~50 burned acres
 _FF_PER_ENGINE = 4
 _MIN_PER_TICK = 1    # advance one sim-minute per tick — true minute-by-minute progression
-_DAY_START_MIN, _DAY_END_MIN = 6 * 60, 20 * 60  # 06:00–20:00 operational day
+_DAY_START_MIN, _DAY_END_MIN = 6 * 60, 9 * 60  # fire's active window (06:00–09:00) — keeps per-minute change visible
 _DAY_SPAN = _DAY_END_MIN - _DAY_START_MIN
 _DEPLOY_AFTER_MIN = 15  # assess the fire first; commit the crew ~15 min into the incident
 

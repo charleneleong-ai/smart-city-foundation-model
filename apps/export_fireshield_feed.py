@@ -42,7 +42,7 @@ def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
-_DAY_START_MIN, _DAY_END_MIN = 6 * 60, 20 * 60  # map the CA steps across an 06:00–20:00 operational day
+_DAY_START_MIN, _DAY_END_MIN = 6 * 60, 9 * 60  # map the CA steps across the fire's active window (06:00–09:00)
 
 
 def _clock(step: int, maxstep: int) -> str:

@@ -203,8 +203,8 @@ _TEMPLATE = """<!DOCTYPE html>
     } catch (e) { syncedToServer = false; }
   }, 250);
 
-  function clockOf(step, total) {  // map a CA step to a wall clock over an 06:00-20:00 operational day
-    const mins = Math.round(360 + (step / Math.max(total, 1)) * 840);
+  function clockOf(step, total) {  // map a CA step to a wall clock over the fire's active window (06:00-09:00)
+    const mins = Math.round(360 + (step / Math.max(total, 1)) * 180);
     return String(Math.floor(mins / 60)).padStart(2, '0') + ':' + String(mins % 60).padStart(2, '0');
   }
   function render() {
