@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 ROLES = ("ba", "pump", "aerial", "command", "staging")  # ba = breathing-apparatus entry
+HEAT_BANDS = ("low", "avg", "high")  # risk.HEAT_TOLERANCE multiplies acute risk by band
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,11 @@ class Firefighter:
     career_dose: float  # cumulative smoke-dose units banked to date
     heat_tolerance: str = "avg"  # "low" / "avg" / "high" — heat-susceptibility band
     conditions: tuple[str, ...] = ()  # fuller clinical ledger beyond the cv/resp flags
+
+    def __post_init__(self) -> None:
+        # a bridged HealthProfile band must be valid — fail fast here, not with a KeyError in acute_risk
+        if self.heat_tolerance not in HEAT_BANDS:
+            raise ValueError(f"heat_tolerance must be one of {HEAT_BANDS}, got {self.heat_tolerance!r}")
 
 
 Roster = list[Firefighter]

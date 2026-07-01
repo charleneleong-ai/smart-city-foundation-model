@@ -1,4 +1,12 @@
+import pytest
+
 from sctwin.deploy.roster import Firefighter, sample_roster
+
+
+def test_invalid_heat_tolerance_band_is_rejected():
+    # a bridged HealthProfile field that isn't low/avg/high fails at construction, not in acute_risk
+    with pytest.raises(ValueError, match="heat_tolerance"):
+        Firefighter("x", 30, "M", "ba", 5, False, False, 0.9, 5.0, heat_tolerance="moderate")
 
 
 def test_sample_roster_is_varied():
