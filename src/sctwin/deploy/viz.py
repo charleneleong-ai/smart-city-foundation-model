@@ -1,5 +1,6 @@
 import math
 from datetime import datetime, timezone
+from typing import cast
 
 import h3
 import polars as pl
@@ -44,7 +45,7 @@ def hazard_surface(scenario: FireScenario, rings: int = 2) -> pl.DataFrame:
         dose = toxicant_dose(local, scenario.duration_min, "standard")
         rows += [{"cell": c, "time": _T0, "layer": lyr, "value": v}
                  for lyr, v in (("smoke", smoke), ("heat", heat), ("dose", dose))]
-    return pl.DataFrame(rows, schema=_CANON)
+    return pl.DataFrame(rows, schema=_CANON)  # type: ignore[arg-type]  # str->DataType map
 
 
 def crew_records(plan: Plan, roster: Roster, scenario: FireScenario) -> list[dict]:
@@ -78,7 +79,8 @@ def deploy_map(scenario: FireScenario, plan: Plan, roster: Roster, *, preset: di
 
     def layer(nm: str, lyr: str) -> dict:
         f = surf.filter(pl.col("layer") == lyr)
-        vmin, vmax = float(f["value"].min()), float(f["value"].max())
+        # min/max on a Float64 column are floats at runtime; the polars stub widens the union
+        vmin, vmax = cast(float, f["value"].min()), cast(float, f["value"].max())
         return {"name": nm, "unit": "", "group": "Fire", "vmin": vmin, "vmax": vmax,
                 "frames": [{"label": "now", "records": h3_layer_records(f, _T0, vmin=vmin, vmax=vmax)}]}
 
