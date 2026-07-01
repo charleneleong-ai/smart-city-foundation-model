@@ -20,18 +20,50 @@ class RiskScore:
     drivers: dict[str, float]  # unweighted per-term contributions
 
 
-HEAT_TOLERANCE = {"low": 1.25, "avg": 1.0, "high": 0.85}
+# Person-intrinsic acute-risk multipliers, calibrated to firefighter sudden-cardiac-death (SCD)
+# epidemiology (Kales/Smith case-control, Am J Cardiol 2013; cardiorespiratory-fitness meta-analysis,
+# IJERPH 2023). These are RELATIVE weights on a bounded susceptibility index, deliberately compressed
+# from the raw death odds ratios (they don't compound as a mortality probability). Provenance of every
+# number: docs/experiments/risk-weight-calibration.md.
+HEAT_TOLERANCE = {"low": 1.25, "avg": 1.0, "high": 0.85}  # heat-strain susceptibility band
+
+# Per-condition acute weight, keyword-matched. Cardiac/hypertensive conditions inherit the SCD odds
+# ratios' dominance (hypertension+LVH OR~12, prior CVD OR~6.89); metabolic/respiratory are moderate;
+# anything unrecognised still adds a little.
+CONDITION_WEIGHTS = {
+    "hypertension": 0.40,
+    "prior mi": 0.40,
+    "myocardial": 0.40,
+    "coronary": 0.40,
+    "cardiovascular": 0.40,
+    "diabetes": 0.25,
+    "copd": 0.25,
+    "obesity": 0.20,
+    "asthma": 0.15,
+    "respiratory": 0.15,
+}
+_CONDITION_DEFAULT = 0.08
+
+
+def condition_burden(conditions: tuple[str, ...]) -> float:
+    """Summed acute weight of the listed comorbidities, keyword-matched — a high-risk cardiac
+    condition weighs far more than a minor one, unlike a flat per-count penalty."""
+    return sum(
+        next((w for k, w in CONDITION_WEIGHTS.items() if k in c.lower()), _CONDITION_DEFAULT)
+        for c in conditions
+    )
 
 
 def acute_risk(ff: Firefighter, hl: float) -> float:
-    """Heat + cardiac risk for thermal load `hl`, amplified by age, CV, low fitness, respiratory,
-    heat-tolerance band, and the count of listed comorbidities."""
-    age_factor = 1.0 + max(ff.age - 40, 0) * 0.02
-    cv_factor = 1.5 if ff.cardiovascular else 1.0
+    """Heat + cardiac susceptibility for thermal load `hl`, amplified by age, known CVD, low fitness,
+    respiratory status, heat-tolerance band, and the comorbidity ledger. Weights are literature-shaped
+    relative multipliers, not fitted to outcome data — see the calibration doc."""
+    age_factor = 1.0 + max(ff.age - 40, 0) * 0.03  # SCD/CRF risk climbs with age past ~40
+    cv_factor = 2.5 if ff.cardiovascular else 1.0  # known CVD: compressed from SCD OR~6.89
     resp_factor = 1.2 if ff.respiratory else 1.0
-    fitness_factor = 1.0 + (1.0 - ff.fitness)  # unfit -> up to ~2x
+    fitness_factor = 1.0 + (1.0 - ff.fitness)  # low CRF is a dominant modifiable risk -> up to ~2x
     heat_factor = HEAT_TOLERANCE[ff.heat_tolerance]
-    comorbidity_factor = 1.0 + 0.05 * len(ff.conditions)  # fuller clinical ledger beyond cv/resp
+    comorbidity_factor = 1.0 + condition_burden(ff.conditions)
     return hl * age_factor * cv_factor * resp_factor * fitness_factor * heat_factor * comorbidity_factor * 0.01
 
 
